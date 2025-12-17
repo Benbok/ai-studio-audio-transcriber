@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Square, AlertCircle, Check, Copy, RotateCw } from 'lucide-react';
 import { RecorderStatus } from './types';
-import { transcribeAudio } from './services/geminiService';
+import { transcribeAudio, TranscriptionMode } from './services/geminiService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
 
@@ -30,6 +30,7 @@ const App: React.FC = () => {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [copyError, setCopyError] = useState<boolean>(false);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [mode, setMode] = useState<TranscriptionMode>('general');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -225,7 +226,7 @@ const App: React.FC = () => {
   const handleTranscription = async (audioBlob: Blob) => {
     try {
       setStatus(RecorderStatus.PROCESSING);
-      const result = await transcribeAudio(audioBlob);
+      const result = await transcribeAudio(audioBlob, mode);
       setText(result.text);
       setLastProvider(result.provider); // Store who did the work
       setStatus(RecorderStatus.COMPLETED);
@@ -285,7 +286,24 @@ const App: React.FC = () => {
           </div>
 
           {/* Controls */}
-          <div className="flex justify-center items-center">
+          <div className="flex flex-col gap-4 justify-center items-center">
+
+            {/* Mode Selector */}
+            <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
+              {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${mode === m
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    }`}
+                >
+                  {m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
+              ))}
+            </div>
+
             {status === RecorderStatus.RECORDING ? (
               <button
                 onClick={stopRecording}
@@ -299,8 +317,8 @@ const App: React.FC = () => {
                 onClick={startRecording}
                 disabled={status === RecorderStatus.PROCESSING}
                 className={`flex items-center justify-center w-20 h-20 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105 ${status === RecorderStatus.PROCESSING
-                    ? 'bg-gray-700 cursor-not-allowed opacity-50'
-                    : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'
+                  ? 'bg-gray-700 cursor-not-allowed opacity-50'
+                  : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'
                   }`}
               >
                 <Mic className="w-10 h-10 text-white" />
