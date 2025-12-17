@@ -1,9 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Square, AlertCircle, Check, Copy, RotateCw } from 'lucide-react';
 import { RecorderStatus } from './types';
-import { transcribeAudio, TranscriptionMode, TranscriptionProvider } from './services/geminiService';
+import { transcribeAudio, TranscriptionMode, TranscriptionProvider, setGeminiApiKey } from './services/geminiService';
+import { setTranscriptionConfig } from './services/openaiService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
+import SettingsModal from './components/SettingsModal';
+import { Settings as SettingsIcon } from 'lucide-react';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RecorderStatus>(RecorderStatus.IDLE);
@@ -32,6 +35,7 @@ const App: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [mode, setMode] = useState<TranscriptionMode>('general');
   const [provider, setProvider] = useState<TranscriptionProvider>('gemini');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -60,6 +64,15 @@ const App: React.FC = () => {
     };
   }, [status]);
 
+  // Load keys from storage on mount
+  useEffect(() => {
+    const gKey = localStorage.getItem('VITE_GEMINI_API_KEY');
+    if (gKey) setGeminiApiKey(gKey);
+
+    const grKey = localStorage.getItem('VITE_GROQ_API_KEY');
+    if (grKey) setTranscriptionConfig(grKey);
+  }, []);
+
   // Health checks on mount
   useEffect(() => {
     let mounted = true;
@@ -84,7 +97,7 @@ const App: React.FC = () => {
     runChecks();
 
     return () => { mounted = false };
-  }, []);
+  }, [isSettingsOpen]); // Re-run checks if settings might have changed
 
   const refreshHealth = async () => {
     setRefreshingHealth(true);
@@ -293,20 +306,26 @@ const App: React.FC = () => {
       <div className="w-full max-w-md bg-gray-950 rounded-3xl shadow-2xl overflow-hidden border border-gray-800">
 
         {/* Header */}
-        <div className="p-6 bg-gradient-to-b from-gray-900 to-gray-950 border-b border-gray-800">
-          <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 text-center">
+        <div className="relative p-4 bg-gradient-to-b from-gray-900 to-gray-950 border-b border-gray-800">
+          <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 text-center">
             Voice Scribe
           </h1>
-          <p className="text-center text-gray-500 text-sm mt-1">
+          <p className="text-center text-gray-500 text-xs mt-0.5">
             RU/EN Dictation & Auto-Copy
           </p>
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="absolute top-4 right-4 p-1.5 text-gray-500 hover:text-white transition-colors"
+          >
+            <SettingsIcon className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Content Area */}
-        <div className="p-6 space-y-8">
+        <div className="p-4 space-y-4">
 
           {/* Main Visualizer Area */}
-          <div className="h-24 flex items-center justify-center w-full bg-gray-900/50 rounded-xl overflow-hidden border border-gray-800/50 relative">
+          <div className="h-16 flex items-center justify-center w-full bg-gray-900/50 rounded-xl overflow-hidden border border-gray-800/50 relative">
             {status === RecorderStatus.RECORDING ? (
               <Visualizer stream={stream} isRecording={true} />
             ) : (
@@ -347,7 +366,7 @@ const App: React.FC = () => {
                     : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
                     }`}
                 >
-                  {p === 'gemini' ? 'Gemini' : 'Groq + DeepSeek'}
+                  {p === 'gemini' ? 'Gemini' : 'Groq + Llama 3'}
                 </button>
               ))}
             </div>
@@ -371,21 +390,21 @@ const App: React.FC = () => {
             {status === RecorderStatus.RECORDING ? (
               <button
                 onClick={stopRecording}
-                className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30 transition-all duration-300 transform hover:scale-105"
+                className="group relative flex items-center justify-center w-14 h-14 rounded-full bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30 transition-all duration-300 transform hover:scale-105"
               >
                 <span className="absolute w-full h-full rounded-full bg-red-500 animate-ping opacity-75"></span>
-                <Square className="w-8 h-8 text-white fill-current relative z-10" />
+                <Square className="w-6 h-6 text-white fill-current relative z-10" />
               </button>
             ) : (
               <button
                 onClick={startRecording}
                 disabled={status === RecorderStatus.PROCESSING}
-                className={`flex items-center justify-center w-20 h-20 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105 ${status === RecorderStatus.PROCESSING
+                className={`flex items-center justify-center w-14 h-14 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105 ${status === RecorderStatus.PROCESSING
                   ? 'bg-gray-700 cursor-not-allowed opacity-50'
                   : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'
                   }`}
               >
-                <Mic className="w-10 h-10 text-white" />
+                <Mic className="w-7 h-7 text-white" />
               </button>
             )}
           </div>
@@ -465,6 +484,8 @@ const App: React.FC = () => {
       <p className="mt-8 text-gray-600 text-xs">
         Powered by Gemini 2.5 Flash {isGroq ? '& Groq' : '& OpenAI'}
       </p>
+
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 };

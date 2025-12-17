@@ -9,11 +9,17 @@ const OPENAI_CHAT_MODEL = _env.VITE_OPENAI_MODEL || process.env.OPENAI_MODEL || 
 const OPENAI_TRANSCRIBE_MODEL = _env.VITE_OPENAI_TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1";
 
 // Dedicated Transcription Configuration (allows using Groq for Voice while keeping Theia/DeepSeek for Chat)
-const TRANSCRIPTION_API_KEY = _env.VITE_TRANSCRIPTION_API_KEY || _env.VITE_GROQ_API_KEY || OPENAI_API_KEY;
-const TRANSCRIPTION_BASE_URL = _env.VITE_TRANSCRIPTION_BASE_URL || ( // if user set specific groq key but no url, auto-set groq url
+export let TRANSCRIPTION_API_KEY = _env.VITE_TRANSCRIPTION_API_KEY || _env.VITE_GROQ_API_KEY || OPENAI_API_KEY;
+export let TRANSCRIPTION_BASE_URL = _env.VITE_TRANSCRIPTION_BASE_URL || ( // if user set specific groq key but no url, auto-set groq url
   (_env.VITE_GROQ_API_KEY) ? "https://api.groq.com/openai/v1" : OPENAI_BASE_URL
 );
-const TRANSCRIPTION_MODEL = _env.VITE_TRANSCRIPTION_MODEL || "whisper-large-v3"; // Default to a good model if using dedicated config
+export let TRANSCRIPTION_MODEL = _env.VITE_TRANSCRIPTION_MODEL || "whisper-large-v3"; // Default to a good model if using dedicated config
+
+export const setTranscriptionConfig = (key: string, url?: string, model?: string) => {
+  if (key) TRANSCRIPTION_API_KEY = key;
+  if (url) TRANSCRIPTION_BASE_URL = url;
+  if (model) TRANSCRIPTION_MODEL = model;
+};
 
 // Normalize base URL: remove trailing slashes and any trailing '/v1' to avoid duplicating path segments
 function normalizeBaseURL(url: string) {
@@ -87,9 +93,10 @@ export async function checkOpenAIHealth(baseURL: string = OPENAI_BASE_URL, timeo
 export async function chatCompletion(
   messages: Array<{ role: string; content: string }>,
   model: string = OPENAI_CHAT_MODEL,
-  baseURL: string = OPENAI_BASE_URL
+  baseURL: string = OPENAI_BASE_URL,
+  apiKey: string = OPENAI_API_KEY
 ) {
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY missing");
+  if (!apiKey) throw new Error("OPENAI_API_KEY missing");
   const base = normalizeBaseURL(baseURL);
   const url = `${base}/v1/chat/completions`;
   const body = JSON.stringify({ model, messages });
@@ -97,7 +104,7 @@ export async function chatCompletion(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body,
   });
