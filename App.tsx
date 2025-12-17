@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Square, AlertCircle, Check, Copy, RotateCw } from 'lucide-react';
 import { RecorderStatus } from './types';
-import { transcribeAudio, TranscriptionMode } from './services/geminiService';
+import { transcribeAudio, TranscriptionMode, TranscriptionProvider } from './services/geminiService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
 
@@ -12,13 +12,13 @@ const App: React.FC = () => {
   const hasGemini = !!(env.VITE_GEMINI_API_KEY || env.VITE_GEMINI_API_KEY === '' ? false : env.VITE_GEMINI_API_KEY) || false;
   const geminiModel = env.VITE_GEMINI_MODEL || 'gemini-2.5-flash';
   const hasOpenAI = !!(env.VITE_OPENAI_API_KEY || process.env?.OPENAI_API_KEY);
-  const openaiModel = env.VITE_OPENAI_MODEL || env.VITE_OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
-  const fallbackEnabled = ((env.VITE_USE_OPENAI_FALLBACK || '') + '').toLowerCase() === '1' || ((env.VITE_FALLBACK_PROVIDER || '') + '').toLowerCase() === 'openai';
-
   // Detect distinct transcription config (Groq)
   const txKey = env.VITE_TRANSCRIPTION_API_KEY || env.VITE_GROQ_API_KEY;
   const txModel = env.VITE_TRANSCRIPTION_MODEL || 'whisper-large-v3';
   const isGroq = !!(txKey && (txKey.startsWith('gsk_') || env.VITE_TRANSCRIPTION_BASE_URL?.includes('groq')));
+
+  const openaiModel = env.VITE_OPENAI_MODEL || env.VITE_OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
+  const fallbackEnabled = ((env.VITE_USE_OPENAI_FALLBACK || '') + '').toLowerCase() === '1' || ((env.VITE_FALLBACK_PROVIDER || '') + '').toLowerCase() === 'openai';
 
   const [geminiHealth, setGeminiHealth] = useState<{ status: string, detail?: string } | null>(null);
   const [openaiHealth, setOpenaiHealth] = useState<{ status: string, detail?: string } | null>(null);
@@ -31,6 +31,7 @@ const App: React.FC = () => {
   const [copyError, setCopyError] = useState<boolean>(false);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [mode, setMode] = useState<TranscriptionMode>('general');
+  const [provider, setProvider] = useState<TranscriptionProvider>('gemini');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -158,6 +159,29 @@ const App: React.FC = () => {
     }
   }, []);
 
+  /* // Hotkeys: Space to toggle recording
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault(); // Prevent scrolling
+
+        if (status === RecorderStatus.IDLE || status === RecorderStatus.COMPLETED) {
+          startRecording();
+        } else if (status === RecorderStatus.RECORDING) {
+          stopRecording();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [status, startRecording, stopRecording]); */
+
   const startRecording = async () => {
     setError(null);
     setText("");
@@ -223,10 +247,33 @@ const App: React.FC = () => {
     }
   };
 
+  // Hotkeys: Space to toggle recording
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault(); // Prevent scrolling
+
+        if (status === RecorderStatus.IDLE || status === RecorderStatus.COMPLETED) {
+          startRecording();
+        } else if (status === RecorderStatus.RECORDING) {
+          stopRecording();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [status, startRecording, stopRecording]);
+
   const handleTranscription = async (audioBlob: Blob) => {
     try {
       setStatus(RecorderStatus.PROCESSING);
-      const result = await transcribeAudio(audioBlob, mode);
+      const result = await transcribeAudio(audioBlob, mode, provider);
       setText(result.text);
       setLastProvider(result.provider); // Store who did the work
       setStatus(RecorderStatus.COMPLETED);
@@ -285,8 +332,25 @@ const App: React.FC = () => {
             )}
           </div>
 
+
           {/* Controls */}
           <div className="flex flex-col gap-4 justify-center items-center">
+
+            {/* Provider Selector */}
+            <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800 w-full max-w-[280px]">
+              {(['gemini', 'groq'] as TranscriptionProvider[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setProvider(p)}
+                  className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${provider === p
+                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    }`}
+                >
+                  {p === 'gemini' ? 'Gemini' : 'Groq + DeepSeek'}
+                </button>
+              ))}
+            </div>
 
             {/* Mode Selector */}
             <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
@@ -295,8 +359,8 @@ const App: React.FC = () => {
                   key={m}
                   onClick={() => setMode(m)}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${mode === m
-                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
                     }`}
                 >
                   {m.charAt(0).toUpperCase() + m.slice(1)}

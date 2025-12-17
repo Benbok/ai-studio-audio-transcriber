@@ -31,6 +31,10 @@
 - `VITE_TRANSCRIPTION_API_KEY` — API ключ для транскрипции (например, Groq API Key).
 - `VITE_TRANSCRIPTION_BASE_URL` — Base URL для транскрипции (например, `https://api.groq.com/openai/v1`).
 - `VITE_TRANSCRIPTION_MODEL` — Модель (например, `whisper-large-v3`).
+- `VITE_PREFER_GROQ=1` — Включить "Быстрый старт". Если режим "General", запрос сразу летит в Groq/OpenAI, минуя Gemini. Это ускоряет транскрипцию в 2-3 раза.
+
+### Горячие клавиши
+- **Пробел**: Старт / Стоп записи.
 
 Health checks
 
