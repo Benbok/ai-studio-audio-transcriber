@@ -1,0 +1,7 @@
+{
+  "name": "VoiceScribe Auto-Copy",
+  "description": "Instant voice transcription for Russian and English. Automatically copies result to clipboard.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
