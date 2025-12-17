@@ -26,6 +26,12 @@
 - `USE_OPENAI_FALLBACK=1` или `FALLBACK_PROVIDER=openai` (или `VITE_USE_OPENAI_FALLBACK` / `VITE_FALLBACK_PROVIDER` в клиенте) — включить автоматический переход на OpenAI при ошибках квоты Gemini (429)
 - `OPENAI_FALLBACK_ON_ERRORS=1` (или `VITE_OPENAI_FALLBACK_ON_ERRORS=1` на клиенте) — если установлено, приложение попытается резервацию OpenAI при более широких классах ошибок (5xx, сетевые/таймауты), а не только 429.
 
+### Настройка отдельного провайдера для голоса (например, Groq)
+Если ваш основной fallback-провайдер (Theia/DeepSeek) не поддерживает аудио, настройте отдельный ключ для транскрипции:
+- `VITE_TRANSCRIPTION_API_KEY` — API ключ для транскрипции (например, Groq API Key).
+- `VITE_TRANSCRIPTION_BASE_URL` — Base URL для транскрипции (например, `https://api.groq.com/openai/v1`).
+- `VITE_TRANSCRIPTION_MODEL` — Модель (например, `whisper-large-v3`).
+
 Health checks
 
 - Приложение выполняет лёгкие health-checks при старте, чтобы проверить доступность провайдеров. Статусы отображаются в UI:
