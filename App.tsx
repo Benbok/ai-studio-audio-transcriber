@@ -1,13 +1,15 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor } from 'lucide-react';
-import { RecorderStatus } from './types';
+import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor, History } from 'lucide-react';
+import { RecorderStatus, TonePreset } from './types';
 import { transcribeAudio, TranscriptionMode, TranscriptionProvider, setGeminiApiKey } from './services/geminiService';
 import { setTranscriptionConfig } from './services/openaiService';
 import { fixPunctuation, setPostProcessingApiKey } from './services/postProcessingService';
+import { saveRecording } from './services/storageService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
 import RecordButton from './components/RecordButton';
 import SettingsModal from './components/SettingsModal';
+import RecordingsList from './components/RecordingsList';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RecorderStatus>(RecorderStatus.IDLE);
@@ -48,10 +50,13 @@ const App: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [mode, setMode] = useState<TranscriptionMode>('general');
   const [provider, setProvider] = useState<TranscriptionProvider>('gemini');
+  const [tone, setTone] = useState<TonePreset>('default');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const currentAudioBlobRef = useRef<Blob | null>(null);
 
   // Cleanup stream on unmount or change
   useEffect(() => {
@@ -77,7 +82,7 @@ const App: React.FC = () => {
     };
   }, [status]);
 
-  // Load keys from storage on mount
+  // Load keys and tone from storage on mount
   useEffect(() => {
     const gKey = localStorage.getItem('VITE_GEMINI_API_KEY');
     if (gKey) {
@@ -87,6 +92,9 @@ const App: React.FC = () => {
 
     const grKey = localStorage.getItem('VITE_GROQ_API_KEY');
     if (grKey) setTranscriptionConfig(grKey);
+
+    const savedTone = (localStorage.getItem('TONE_PRESET') || 'default') as TonePreset;
+    setTone(savedTone);
   }, []);
 
   // Health checks on mount
@@ -220,6 +228,7 @@ const App: React.FC = () => {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(chunksRef.current, { type: mimeType });
+        currentAudioBlobRef.current = audioBlob;
         handleTranscription(audioBlob);
 
         audioStream.getTracks().forEach(track => track.stop());
@@ -265,47 +274,86 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [status]);
 
-  const handleTranscription = async (audioBlob: Blob) => {
+  const handleTranscription = async (audioBlob: Blob, recordingIdToUpdate?: number, toneOverride?: TonePreset) => {
     try {
       setStatus(RecorderStatus.PROCESSING);
-      const result = await transcribeAudio(audioBlob, mode, provider);
+      const activeTone = toneOverride || tone;
+      const result = await transcribeAudio(audioBlob, mode, provider, activeTone);
 
-      // Сначала показываем сырой результат
+      // Показываем сырой результат СРАЗУ (ключевая оптимизация)
       setText(result.text);
       setLastProvider(result.provider);
       setStatus(RecorderStatus.COMPLETED);
 
-      // Автоматическое исправление пунктуации
-      setIsProcessingPunctuation(true);
-      try {
-        const punctuationResult = await fixPunctuation(result.text);
-        if (punctuationResult.success && punctuationResult.text) {
-          setText(punctuationResult.text);
+      // Копируем сырой текст немедленно, чтобы пользователь мог работать
+      await copyToClipboard(result.text);
 
-          // Автокопирование обработанного текста
-          if (punctuationResult.text) {
+      // Фоновая обработка пунктуации (не блокирует UI)
+      setIsProcessingPunctuation(true);
+
+      fixPunctuation(result.text, mode, activeTone)
+        .then(async (punctuationResult) => {
+          if (punctuationResult.success && punctuationResult.text) {
+            // Обновляем текст с улучшенной пунктуацией
+            setText(punctuationResult.text);
             await copyToClipboard(punctuationResult.text);
+
+            // Сохраняем финальную версию с пунктуацией
+            try {
+              await saveRecording(audioBlob, punctuationResult.text, {
+                mode,
+                provider: result.provider,
+                tone: activeTone,
+                duration: elapsedTime,
+              });
+              console.info('Recording saved to IndexedDB with punctuation');
+            } catch (saveErr) {
+              console.error('Failed to save recording:', saveErr);
+            }
+          } else {
+            // Если пунктуация не удалась, сохраняем оригинал
+            try {
+              await saveRecording(audioBlob, result.text, {
+                mode,
+                provider: result.provider,
+                tone: activeTone,
+                duration: elapsedTime,
+              });
+              console.info('Recording saved to IndexedDB (original text)');
+            } catch (saveErr) {
+              console.error('Failed to save recording:', saveErr);
+            }
           }
-        } else {
-          // Если пунктуация не удалась, копируем оригинал
-          if (result.text) {
-            await copyToClipboard(result.text);
-          }
-        }
-      } catch (punctErr) {
-        console.warn('Punctuation processing failed:', punctErr);
-        // Копируем оригинал при ошибке
-        if (result.text) {
-          await copyToClipboard(result.text);
-        }
-      } finally {
-        setIsProcessingPunctuation(false);
-      }
+        })
+        .catch((punctErr) => {
+          console.warn('Punctuation processing failed:', punctErr);
+          // Сохраняем оригинал при ошибке
+          saveRecording(audioBlob, result.text, {
+            mode,
+            provider: result.provider,
+            tone: activeTone,
+            duration: elapsedTime,
+          }).catch(saveErr => console.error('Failed to save recording:', saveErr));
+        })
+        .finally(() => {
+          setIsProcessingPunctuation(false);
+        });
+
     } catch (err) {
       setError(err instanceof Error ? err.message : "Произошла неизвестная ошибка");
       setStatus(RecorderStatus.IDLE);
       setIsProcessingPunctuation(false);
     }
+  };
+
+  const handleRetranscribe = (audioBlob: Blob, recordingId: number, toneOverride?: TonePreset) => {
+    // Reset state and re-transcribe with current settings (or overridden tone)
+    setText("");
+    setError(null);
+    setCopied(false);
+    setLastProvider(null);
+    currentAudioBlobRef.current = audioBlob;
+    handleTranscription(audioBlob, recordingId, toneOverride);
   };
 
   return (
@@ -330,6 +378,13 @@ const App: React.FC = () => {
                   title="Выход из мини-режима"
                 >
                   <Monitor className="w-4 h-4 text-blue-400" />
+                </button>
+                <button
+                  onClick={() => setIsHistoryOpen(true)}
+                  className="p-2 glass rounded-lg hover:border-purple-500/50 transition-all interactive"
+                  title="История записей"
+                >
+                  <History className="w-4 h-4 text-purple-400" />
                 </button>
                 <button
                   onClick={() => setIsSettingsOpen(true)}
@@ -413,6 +468,13 @@ const App: React.FC = () => {
                     title="Мини-режим"
                   >
                     <Monitor className="w-5 h-5 text-gray-400" />
+                  </button>
+                  <button
+                    onClick={() => setIsHistoryOpen(true)}
+                    className="p-3 glass rounded-xl hover:border-purple-500/50 transition-all interactive"
+                    title="История записей"
+                  >
+                    <History className="w-5 h-5 text-purple-400" />
                   </button>
                   <button
                     onClick={() => setIsSettingsOpen(true)}
@@ -562,6 +624,11 @@ const App: React.FC = () => {
       </div>
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <RecordingsList
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        onRetranscribe={handleRetranscribe}
+      />
     </div>
   );
 };

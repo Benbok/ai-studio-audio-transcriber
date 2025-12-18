@@ -1,4 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
+import openaiService from './openaiService'; // Static import for fallback chain
+import type { TranscriptionMode, TonePreset } from '../types';
 
 // Типы постобработки
 export type PostProcessingType = 'punctuation' | 'format' | 'style' | 'extract' | 'translate';
@@ -15,6 +17,7 @@ export interface ProcessingResult {
     text?: string;
     keyPoints?: KeyPoints;
     error?: string;
+    provider?: string;
 }
 
 // Глобальная переменная для API клиента
@@ -49,17 +52,39 @@ function getAI() {
 }
 
 /**
- * АВТОМАТИЧЕСКАЯ: Исправление пунктуации
- * Вызывается автоматически после каждой транскрибации
+ * АВТОМАТИЧЕСКАЯ: Исправление пунктуации (mode-aware)
+ * - В режиме 'general': только пунктуация, никаких изменений стиля
+ * - В режиме 'corrector': пунктуация + применение тональности для преобразования стиля
  */
-export async function fixPunctuation(text: string): Promise<ProcessingResult> {
+export async function fixPunctuation(text: string, mode: TranscriptionMode = 'general', tone: TonePreset = 'default'): Promise<ProcessingResult> {
     try {
         const client = getAI();
 
-        const prompt = `Исправь пунктуацию в следующем тексте. Расставь запятые, точки, вопросительные и восклицательные знаки согласно правилам русского и английского языка. Сохрани весь контент без изменений, только добавь знаки препинания. Не добавляй никаких пояснений, верни только исправленный текст.
+        // Для режима 'general' — только пунктуация без изменения стиля
+        const isGeneralMode = mode === 'general';
+
+        let prompt: string;
+        if (isGeneralMode) {
+            prompt = `Исправь пунктуацию в следующем тексте. Расставь запятые, точки, вопросительные и восклицательные знаки согласно правилам русского и английского языка. Сохрани весь контент без изменений, только добавь знаки препинания. Не добавляй никаких пояснений, верни только исправленный текст.
 
 Текст:
 ${text}`;
+        } else {
+            // Для 'corrector' и других режимов: применяем тональность
+            const toneInstructions: Record<TonePreset, string> = {
+                'default': '',
+                'friendly': 'Используй теплый, разговорный и дружелюбный тон.',
+                'serious': 'Используй строгий, формальный и серьезный тон.',
+                'professional': 'Используй отполированный, деловой и профессиональный стиль.'
+            };
+
+            const toneInstruction = toneInstructions[tone] || '';
+
+            prompt = `Исправь пунктуацию и улучши стиль следующего текста. ${toneInstruction} Расставь запятые, точки, вопросительные и восклицательные знаки. Сохрани ключевой смысл. Верни только исправленный текст без пояснений.
+
+Текст:
+${text}`;
+        }
 
         const result = await client.models.generateContent({
             model: 'gemini-2.0-flash-exp',
@@ -73,7 +98,71 @@ ${text}`;
             text: processedText
         };
     } catch (error) {
-        console.error('Punctuation fixing error:', error);
+        console.warn('Punctuation fixing error:', error);
+
+        // Fallback to Groq/OpenAI if Gemini fails (e.g., quota exceeded)
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        const PUNCTUATION_PROMPT = mode === 'general'
+            ? `Исправь пунктуацию в тексте. Расставь запятые, точки, вопросительные и восклицательные знаки. Сохрани весь контент без изменений, только добавь знаки препинания. Верни только исправленный текст без пояснений.`
+            : `Исправь пунктуацию и улучши стиль текста. Расставь запятые, точки, вопросительные и восклицательные знаки. Сохрани ключевой смысл, но улучши формулировки. Верни только исправленный текст без пояснений.`;
+
+        if (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED')) {
+            try {
+                console.info('Gemini quota exceeded for punctuation — attempting Groq fallback');
+
+                const fallbackResult = await openaiService.chatCompletion(
+                    [
+                        { role: 'system', content: PUNCTUATION_PROMPT },
+                        { role: 'user', content: text }
+                    ],
+                    'llama-3.3-70b-versatile'
+                );
+
+                if (fallbackResult?.choices?.[0]?.message?.content) {
+                    return {
+                        success: true,
+                        text: fallbackResult.choices[0].message.content.trim(),
+                        provider: 'Groq (Llama 3)'
+                    };
+                }
+            } catch (fallbackErr) {
+                console.warn('Groq fallback also failed, trying DeepSeek:', fallbackErr);
+
+                // DeepSeek Fallback (Tier 3)
+                const env = (import.meta as any).env || {};
+                const dsKey = localStorage.getItem('VITE_DEEPSEEK_API_KEY') || env.VITE_DEEPSEEK_API_KEY || env.VITE_OPENAI_API_KEY;
+
+                if (dsKey) {
+                    try {
+                        console.info('Attempting DeepSeek fallback for punctuation');
+
+                        const dsModel = env.VITE_DEEPSEEK_MODEL || env.VITE_OPENAI_MODEL || 'deepseek-chat';
+                        const dsBaseUrl = env.VITE_DEEPSEEK_BASE_URL || env.VITE_OPENAI_BASE_URL || 'https://api.deepseek.com/v1';
+
+                        const dsResult = await openaiService.chatCompletion(
+                            [
+                                { role: 'system', content: PUNCTUATION_PROMPT },
+                                { role: 'user', content: text }
+                            ],
+                            dsModel,
+                            dsBaseUrl,
+                            dsKey
+                        );
+
+                        if (dsResult?.choices?.[0]?.message?.content) {
+                            return {
+                                success: true,
+                                text: dsResult.choices[0].message.content.trim(),
+                                provider: 'DeepSeek'
+                            };
+                        }
+                    } catch (dsErr) {
+                        console.warn('DeepSeek fallback also failed:', dsErr);
+                    }
+                }
+            }
+        }
+
         return {
             success: false,
             text: text, // Возвращаем оригинал при ошибке

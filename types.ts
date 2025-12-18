@@ -13,11 +13,23 @@ export enum RecorderStatus {
   COMPLETED = 'COMPLETED',
 }
 
+export type TonePreset = 'default' | 'friendly' | 'serious' | 'professional';
+export type TranscriptionMode = 'general' | 'corrector';
+export type TranscriptionProvider = 'gemini' | 'groq';
+
+export interface ToneConfig {
+  temperature: number;
+  promptSuffix: string;
+}
+
 // Electron environment variables interface
 declare global {
   interface Window {
     electronEnv?: {
       [key: string]: string;
+    };
+    electronAPI?: {
+      toggleMiniMode: (enabled: boolean) => Promise<void>;
     };
   }
 }

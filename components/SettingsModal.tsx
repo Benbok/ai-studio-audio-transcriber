@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, AlertCircle, Loader2, Key, Palette, Keyboard } from 'lucide-react';
+import { X, Check, AlertCircle, Loader2, Key, Palette, Keyboard, Volume2 } from 'lucide-react';
 import { setGeminiApiKey, checkGeminiHealth } from '../services/geminiService';
 import { setTranscriptionConfig } from '../services/openaiService';
+import { TonePreset } from '../types';
 
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
-type TabType = 'api' | 'appearance' | 'shortcuts';
+type TabType = 'api' | 'tone' | 'appearance' | 'shortcuts';
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [activeTab, setActiveTab] = useState<TabType>('api');
     const [geminiKey, setGeminiKey] = useState('');
     const [groqKey, setGroqKey] = useState('');
+    const [deepseekKey, setDeepseekKey] = useState('');
+    const [selectedTone, setSelectedTone] = useState<TonePreset>('default');
     const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [msg, setMsg] = useState('');
 
@@ -22,8 +25,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         if (isOpen) {
             const gKey = localStorage.getItem('VITE_GEMINI_API_KEY') || '';
             const grKey = localStorage.getItem('VITE_GROQ_API_KEY') || '';
+            const dsKey = localStorage.getItem('VITE_DEEPSEEK_API_KEY') || '';
+            const tone = (localStorage.getItem('TONE_PRESET') || 'default') as TonePreset;
             setGeminiKey(gKey);
             setGroqKey(grKey);
+            setDeepseekKey(dsKey);
+            setSelectedTone(tone);
             setStatus('idle');
             setMsg('');
         }
@@ -41,6 +48,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             // Persist
             if (geminiKey) localStorage.setItem('VITE_GEMINI_API_KEY', geminiKey);
             if (groqKey) localStorage.setItem('VITE_GROQ_API_KEY', groqKey);
+            if (deepseekKey) localStorage.setItem('VITE_DEEPSEEK_API_KEY', deepseekKey);
+            localStorage.setItem('TONE_PRESET', selectedTone);
 
             // Health check for Gemini
             if (geminiKey) {
@@ -88,6 +97,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 <div className="flex border-b border-gray-800/50 px-6">
                     {[
                         { id: 'api' as TabType, label: 'API Ключи', icon: Key },
+                        { id: 'tone' as TabType, label: 'Тон голоса', icon: Volume2 },
                         { id: 'appearance' as TabType, label: 'Внешний вид', icon: Palette },
                         { id: 'shortcuts' as TabType, label: 'Горячие клавиши', icon: Keyboard },
                     ].map((tab) => (
@@ -95,8 +105,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all relative ${activeTab === tab.id
-                                    ? 'text-blue-400'
-                                    : 'text-gray-500 hover:text-gray-300'
+                                ? 'text-blue-400'
+                                : 'text-gray-500 hover:text-gray-300'
                                 }`}
                         >
                             <tab.icon className="w-4 h-4" />
@@ -166,13 +176,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                                 </p>
                             </div>
 
+                            {/* DeepSeek Key */}
+                            <div>
+                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-2">
+                                    <div className="w-2 h-2 rounded-full bg-cyan-500"></div>
+                                    DeepSeek API Key (Fallback)
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type="password"
+                                        value={deepseekKey}
+                                        onChange={(e) => setDeepseekKey(e.target.value)}
+                                        placeholder="sk-..."
+                                        className="w-full glass border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all placeholder:text-gray-700"
+                                    />
+                                    {deepseekKey && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                            <Check className="w-4 h-4 text-green-400" />
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
+                                    <AlertCircle className="w-3 h-3" />
+                                    Используется как последний вариант при падении Gemini и Groq
+                                </p>
+                            </div>
+
                             {/* Status Message */}
                             {status !== 'idle' && (
                                 <div className={`flex items-center gap-3 text-sm p-4 rounded-xl border animate-slide-down ${status === 'error'
-                                        ? 'bg-red-500/10 text-red-400 border-red-500/30'
-                                        : status === 'success'
-                                            ? 'bg-green-500/10 text-green-400 border-green-500/30'
-                                            : 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                    ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                                    : status === 'success'
+                                        ? 'bg-green-500/10 text-green-400 border-green-500/30'
+                                        : 'bg-blue-500/10 text-blue-400 border-blue-500/30'
                                     }`}>
                                     {status === 'saving' && <Loader2 className="w-5 h-5 animate-spin" />}
                                     {status === 'success' && <Check className="w-5 h-5" />}
@@ -180,6 +216,51 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                                     <span className="font-medium">{msg}</span>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* Tone Tab */}
+                    {activeTab === 'tone' && (
+                        <div className="space-y-5 animate-fade-in">
+                            <div>
+                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3">
+                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                                    Тон транскрибации
+                                </label>
+                                <p className="text-xs text-gray-500 mb-4">
+                                    Выберите стиль обработки текста. Это влияет на формальность и тональность результата.
+                                </p>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {([
+                                        { value: 'default', label: 'По умолчанию', desc: 'Нейтральный стиль' },
+                                        { value: 'friendly', label: 'Дружелюбный', desc: 'Теплый и разговорный' },
+                                        { value: 'serious', label: 'Серьезный', desc: 'Формальный и строгий' },
+                                        { value: 'professional', label: 'Профессиональный', desc: 'Деловой стиль' },
+                                    ] as { value: TonePreset; label: string; desc: string }[]).map((tone) => (
+                                        <button
+                                            key={tone.value}
+                                            onClick={() => setSelectedTone(tone.value)}
+                                            className={`p-4 rounded-xl text-left transition-all border-2 ${selectedTone === tone.value
+                                                ? 'bg-purple-500/20 border-purple-500 shadow-lg shadow-purple-500/20'
+                                                : 'glass border-gray-800 hover:border-purple-500/50'
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="font-semibold text-sm text-gray-200">{tone.label}</span>
+                                                {selectedTone === tone.value && <Check className="w-4 h-4 text-purple-400" />}
+                                            </div>
+                                            <p className="text-xs text-gray-500">{tone.desc}</p>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                                <p className="text-xs text-blue-400 flex items-center gap-2">
+                                    <AlertCircle className="w-4 h-4" />
+                                    Настройка тона применяется ко всем новым транскрибациям и повторным обработкам
+                                </p>
+                            </div>
                         </div>
                     )}
 
@@ -239,7 +320,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={status === 'saving' || activeTab !== 'api'}
+                        disabled={status === 'saving' || (activeTab !== 'api' && activeTab !== 'tone')}
                         className="flex-1 py-3 bg-gradient-primary text-white font-medium rounded-xl shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40 transition-all interactive disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {status === 'saving' ? (
