@@ -35,3 +35,8 @@ const electronEnvProxy = new Proxy({}, {
 
 contextBridge.exposeInMainWorld('electronEnv', electronEnvProxy);
 
+contextBridge.exposeInMainWorld('electronAPI', {
+  toggleMiniMode: (isMini) => ipcRenderer.invoke('toggle-mini-mode', isMini),
+  setAlwaysOnTop: (value) => ipcRenderer.invoke('set-always-on-top', value),
+});
+

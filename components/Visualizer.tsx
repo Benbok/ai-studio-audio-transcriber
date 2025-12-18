@@ -17,24 +17,33 @@ const Visualizer: React.FC<VisualizerProps> = ({ stream, isRecording }) => {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const source = audioContext.createMediaStreamSource(stream);
     const analyser = audioContext.createAnalyser();
-    
-    analyser.fftSize = 256;
+
+    // Увеличиваем fftSize для более детальной визуализации
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.8;
     source.connect(analyser);
-    
+
     analyserRef.current = analyser;
     const bufferLength = analyser.frequencyBinCount;
     dataArrayRef.current = new Uint8Array(bufferLength);
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    
+
     if (!ctx) return;
+
+    // Устанавливаем размеры canvas с учетом DPI
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
 
     const draw = () => {
       if (!isRecording) return;
-      
-      const width = canvas.width;
-      const height = canvas.height;
+
+      const width = rect.width;
+      const height = rect.height;
       const analyser = analyserRef.current;
       const dataArray = dataArrayRef.current;
 
@@ -42,24 +51,49 @@ const Visualizer: React.FC<VisualizerProps> = ({ stream, isRecording }) => {
         analyser.getByteFrequencyData(dataArray);
       }
 
-      ctx.clearRect(0, 0, width, height);
+      // Градиентный фон с легким blur эффектом
+      ctx.fillStyle = 'rgba(10, 10, 15, 0.3)';
+      ctx.fillRect(0, 0, width, height);
 
-      const barWidth = (width / (dataArray?.length || 1)) * 2.5;
-      let barHeight;
-      let x = 0;
+      if (!dataArray) return;
 
-      if (dataArray) {
-        for (let i = 0; i < dataArray.length; i++) {
-          barHeight = dataArray[i] / 2;
-          
-          const r = barHeight + 25 * (i / dataArray.length);
-          const g = 250 * (i / dataArray.length);
-          const b = 50;
+      // Количество баров для отображения
+      const barCount = 64;
+      const barWidth = width / barCount * 0.8;
+      const barGap = width / barCount * 0.2;
 
-          ctx.fillStyle = `rgb(${r},${g},${b})`;
-          ctx.fillRect(x, height - barHeight, barWidth, barHeight);
+      for (let i = 0; i < barCount; i++) {
+        // Используем логарифмическое распределение для более естественного вида
+        const dataIndex = Math.floor(Math.pow(i / barCount, 1.5) * dataArray.length);
+        const value = dataArray[dataIndex] || 0;
 
-          x += barWidth + 1;
+        // Нормализуем значение
+        const barHeight = (value / 255) * height * 0.9;
+        const x = i * (barWidth + barGap);
+        const y = height - barHeight;
+
+        // Создаем градиент для каждого бара
+        const gradient = ctx.createLinearGradient(x, y, x, height);
+
+        // Цвета от синего к фиолетовому с учетом интенсивности
+        const intensity = value / 255;
+        gradient.addColorStop(0, `rgba(102, 126, 234, ${intensity})`);
+        gradient.addColorStop(0.5, `rgba(118, 75, 162, ${intensity})`);
+        gradient.addColorStop(1, `rgba(79, 172, 254, ${intensity * 0.8})`);
+
+        ctx.fillStyle = gradient;
+
+        // Рисуем бар с закругленными углами
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, barHeight, [barWidth / 2, barWidth / 2, 0, 0]);
+        ctx.fill();
+
+        // Добавляем glow эффект для высоких значений
+        if (intensity > 0.6) {
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = `rgba(102, 126, 234, ${intensity})`;
+          ctx.fill();
+          ctx.shadowBlur = 0;
         }
       }
 
@@ -77,11 +111,14 @@ const Visualizer: React.FC<VisualizerProps> = ({ stream, isRecording }) => {
   }, [stream, isRecording]);
 
   return (
-    <canvas 
-      ref={canvasRef} 
-      width={300} 
-      height={60} 
-      className="w-full h-16 rounded-lg opacity-80"
+    <canvas
+      ref={canvasRef}
+      className="w-full h-full rounded-xl"
+      style={{
+        width: '100%',
+        height: '100%',
+        imageRendering: 'crisp-edges'
+      }}
     />
   );
 };

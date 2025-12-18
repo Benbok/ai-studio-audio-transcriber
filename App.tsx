@@ -1,20 +1,23 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Square, AlertCircle, Check, Copy, RotateCw } from 'lucide-react';
+import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon } from 'lucide-react';
 import { RecorderStatus } from './types';
 import { transcribeAudio, TranscriptionMode, TranscriptionProvider, setGeminiApiKey } from './services/geminiService';
 import { setTranscriptionConfig } from './services/openaiService';
+import { fixPunctuation, setPostProcessingApiKey } from './services/postProcessingService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
 import SettingsModal from './components/SettingsModal';
-import { Settings as SettingsIcon } from 'lucide-react';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RecorderStatus>(RecorderStatus.IDLE);
+  const [isProcessingPunctuation, setIsProcessingPunctuation] = useState<boolean>(false);
+
   // Compute model/provider availability for UI
   const env = (import.meta as any).env || {};
   const hasGemini = !!(env.VITE_GEMINI_API_KEY || env.VITE_GEMINI_API_KEY === '' ? false : env.VITE_GEMINI_API_KEY) || false;
   const geminiModel = env.VITE_GEMINI_MODEL || 'gemini-2.5-flash';
   const hasOpenAI = !!(env.VITE_OPENAI_API_KEY || process.env?.OPENAI_API_KEY);
+
   // Detect distinct transcription config (Groq)
   const txKey = env.VITE_TRANSCRIPTION_API_KEY || env.VITE_GROQ_API_KEY;
   const txModel = env.VITE_TRANSCRIPTION_MODEL || 'whisper-large-v3';
@@ -67,7 +70,10 @@ const App: React.FC = () => {
   // Load keys from storage on mount
   useEffect(() => {
     const gKey = localStorage.getItem('VITE_GEMINI_API_KEY');
-    if (gKey) setGeminiApiKey(gKey);
+    if (gKey) {
+      setGeminiApiKey(gKey);
+      setPostProcessingApiKey(gKey); // Используем тот же ключ для постобработки
+    }
 
     const grKey = localStorage.getItem('VITE_GROQ_API_KEY');
     if (grKey) setTranscriptionConfig(grKey);
@@ -97,7 +103,7 @@ const App: React.FC = () => {
     runChecks();
 
     return () => { mounted = false };
-  }, [isSettingsOpen]); // Re-run checks if settings might have changed
+  }, [isSettingsOpen]);
 
   const refreshHealth = async () => {
     setRefreshingHealth(true);
@@ -117,7 +123,6 @@ const App: React.FC = () => {
     }
   };
 
-
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -136,7 +141,6 @@ const App: React.FC = () => {
         return;
       } catch (err) {
         console.warn('Clipboard API failed, attempting fallback:', err);
-        // Continue to fallback
       }
     }
 
@@ -144,8 +148,6 @@ const App: React.FC = () => {
     try {
       const textArea = document.createElement("textarea");
       textArea.value = textToCopy;
-
-      // Ensure textarea is part of DOM but not visually disruptive
       textArea.style.position = "fixed";
       textArea.style.left = "0";
       textArea.style.top = "0";
@@ -172,29 +174,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  /* // Hotkeys: Space to toggle recording
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input/textarea
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
-        return;
-      }
-
-      if (e.code === 'Space') {
-        e.preventDefault(); // Prevent scrolling
-
-        if (status === RecorderStatus.IDLE || status === RecorderStatus.COMPLETED) {
-          startRecording();
-        } else if (status === RecorderStatus.RECORDING) {
-          stopRecording();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [status, startRecording, stopRecording]); */
-
   const startRecording = async () => {
     setError(null);
     setText("");
@@ -207,16 +186,13 @@ const App: React.FC = () => {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setStream(audioStream);
 
-      // Check supported mime types and set options for voice optimization
       let mimeType = 'audio/webm';
       if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
         mimeType = 'audio/webm;codecs=opus';
       } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-        mimeType = 'audio/mp4'; // Safari
+        mimeType = 'audio/mp4';
       }
 
-      // 64kbps is sufficient for high quality speech and allows for longer recordings (30m+)
-      // without hitting API payload size limits for inline data.
       const options: MediaRecorderOptions = {
         mimeType,
         audioBitsPerSecond: 64000
@@ -236,7 +212,6 @@ const App: React.FC = () => {
         const audioBlob = new Blob(chunksRef.current, { type: mimeType });
         handleTranscription(audioBlob);
 
-        // Stop all tracks to release microphone
         audioStream.getTracks().forEach(track => track.stop());
         setStream(null);
       };
@@ -246,7 +221,7 @@ const App: React.FC = () => {
 
     } catch (err) {
       console.error("Error accessing microphone:", err);
-      setError("Microphone access denied. Please allow microphone permissions.");
+      setError("Доступ к микрофону запрещен. Пожалуйста, разрешите доступ к микрофону.");
       setStatus(RecorderStatus.IDLE);
     }
   };
@@ -254,8 +229,6 @@ const App: React.FC = () => {
   const stopRecording = () => {
     if (mediaRecorderRef.current && status === RecorderStatus.RECORDING) {
       mediaRecorderRef.current.stop();
-      // Status update to PROCESSING happens in onstop handler via handleTranscription call 
-      // but purely specifically, we set it here to update UI immediately
       setStatus(RecorderStatus.PROCESSING);
     }
   };
@@ -263,13 +236,12 @@ const App: React.FC = () => {
   // Hotkeys: Space to toggle recording
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input/textarea
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
         return;
       }
 
       if (e.code === 'Space') {
-        e.preventDefault(); // Prevent scrolling
+        e.preventDefault();
 
         if (status === RecorderStatus.IDLE || status === RecorderStatus.COMPLETED) {
           startRecording();
@@ -281,222 +253,320 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [status, startRecording, stopRecording]);
+  }, [status]);
 
   const handleTranscription = async (audioBlob: Blob) => {
     try {
       setStatus(RecorderStatus.PROCESSING);
       const result = await transcribeAudio(audioBlob, mode, provider);
+
+      // Сначала показываем сырой результат
       setText(result.text);
-      setLastProvider(result.provider); // Store who did the work
+      setLastProvider(result.provider);
       setStatus(RecorderStatus.COMPLETED);
 
-      // Auto-copy logic
-      if (result.text) {
-        await copyToClipboard(result.text);
+      // Автоматическое исправление пунктуации
+      setIsProcessingPunctuation(true);
+      try {
+        const punctuationResult = await fixPunctuation(result.text);
+        if (punctuationResult.success && punctuationResult.text) {
+          setText(punctuationResult.text);
+
+          // Автокопирование обработанного текста
+          if (punctuationResult.text) {
+            await copyToClipboard(punctuationResult.text);
+          }
+        } else {
+          // Если пунктуация не удалась, копируем оригинал
+          if (result.text) {
+            await copyToClipboard(result.text);
+          }
+        }
+      } catch (punctErr) {
+        console.warn('Punctuation processing failed:', punctErr);
+        // Копируем оригинал при ошибке
+        if (result.text) {
+          await copyToClipboard(result.text);
+        }
+      } finally {
+        setIsProcessingPunctuation(false);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An unknown error occurred");
+      setError(err instanceof Error ? err.message : "Произошла неизвестная ошибка");
       setStatus(RecorderStatus.IDLE);
+      setIsProcessingPunctuation(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-gray-950 rounded-3xl shadow-2xl overflow-hidden border border-gray-800">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-purple-900/20 text-white flex items-center justify-center p-6">
+      <div className="w-full max-w-4xl space-y-6 animate-fade-in">
 
-        {/* Header */}
-        <div className="relative p-4 bg-gradient-to-b from-gray-900 to-gray-950 border-b border-gray-800">
-          <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 text-center">
-            Voice Scribe
-          </h1>
-          <p className="text-center text-gray-500 text-xs mt-0.5">
-            RU/EN Dictation & Auto-Copy
-          </p>
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="absolute top-4 right-4 p-1.5 text-gray-500 hover:text-white transition-colors"
-          >
-            <SettingsIcon className="w-4 h-4" />
-          </button>
+        {/* Header Card */}
+        <div className="glass rounded-3xl p-6 shadow-2xl border border-gray-800/50 relative overflow-hidden">
+          {/* Decorative gradient overlay */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-primary"></div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold gradient-text mb-1">
+                Voice Scribe
+              </h1>
+              <p className="text-gray-400 text-sm">
+                Профессиональная транскрибация RU/EN с автокопированием
+              </p>
+            </div>
+
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-3 glass rounded-xl hover:border-blue-500/50 transition-all interactive"
+            >
+              <SettingsIcon className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
         </div>
 
-        {/* Content Area */}
-        <div className="p-4 space-y-4">
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* Main Visualizer Area */}
-          <div className="h-16 flex items-center justify-center w-full bg-gray-900/50 rounded-xl overflow-hidden border border-gray-800/50 relative">
-            {status === RecorderStatus.RECORDING ? (
-              <Visualizer stream={stream} isRecording={true} />
-            ) : (
-              <div className="flex gap-1 items-end h-8">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="w-2 bg-gray-700 rounded-full" style={{ height: `${Math.random() * 20 + 10}px` }}></div>
-                ))}
-              </div>
-            )}
+          {/* Left Column - Controls */}
+          <div className="lg:col-span-1 space-y-4">
 
-            {/* Timer Overlay */}
-            {status === RecorderStatus.RECORDING && (
-              <div className="absolute bottom-2 right-2 bg-gray-900/80 px-2 py-0.5 rounded text-xs font-mono text-red-400 border border-red-500/30">
-                {formatTime(elapsedTime)}
-              </div>
-            )}
+            {/* Visualizer Card */}
+            <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50 h-32 relative overflow-hidden">
+              {status === RecorderStatus.RECORDING ? (
+                <Visualizer stream={stream} isRecording={true} />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <div className="flex gap-2 items-end">
+                    {[20, 35, 25, 40, 30, 45, 25, 35].map((height, i) => (
+                      <div
+                        key={i}
+                        className="w-2 bg-gradient-to-t from-gray-700 to-gray-600 rounded-full transition-all duration-300"
+                        style={{ height: `${height}px` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-            {/* Model in-use badge (visible while recording) */}
-            {status === RecorderStatus.RECORDING && (
-              <div className="absolute bottom-2 left-2 bg-gray-900/70 px-2 py-0.5 rounded text-xs text-gray-200">
-                Использует: <span className="font-semibold">{hasGemini ? `Gemini (${geminiModel})` : (hasOpenAI ? `OpenAI (${openaiModel})` : '—')}</span>
-              </div>
-            )}
-          </div>
-
-
-          {/* Controls */}
-          <div className="flex flex-col gap-4 justify-center items-center">
+              {/* Timer Overlay */}
+              {status === RecorderStatus.RECORDING && (
+                <div className="absolute bottom-3 right-3 glass-strong px-3 py-1 rounded-full text-xs font-mono text-red-400 border border-red-500/30 animate-glow-pulse">
+                  ⏺ {formatTime(elapsedTime)}
+                </div>
+              )}
+            </div>
 
             {/* Provider Selector */}
-            <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800 w-full max-w-[280px]">
-              {(['gemini', 'groq'] as TranscriptionProvider[]).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setProvider(p)}
-                  className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${provider === p
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                    }`}
-                >
-                  {p === 'gemini' ? 'Gemini' : 'Groq + Llama 3'}
-                </button>
-              ))}
+            <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
+              <label className="text-xs font-semibold text-gray-400 mb-3 block uppercase tracking-wider flex items-center justify-between">
+                <span>Провайдер транскрибации</span>
+                {provider && (
+                  <span className="text-[10px] px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full border border-green-500/30 animate-pulse">
+                    ● АКТИВЕН
+                  </span>
+                )}
+              </label>
+              <div className="flex gap-2">
+                {(['gemini', 'groq'] as TranscriptionProvider[]).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setProvider(p)}
+                    className={`relative flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${provider === p
+                      ? 'bg-gradient-primary text-white shadow-xl shadow-blue-500/50 scale-105 border-2 border-blue-400'
+                      : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border-2 border-transparent'
+                      }`}
+                  >
+                    <div className="flex flex-col items-center gap-1">
+                      {p === 'gemini' ? (
+                        <>
+                          <span className="text-lg">✨</span>
+                          <span>Gemini</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-lg">⚡</span>
+                          <span>Groq + Llama</span>
+                        </>
+                      )}
+                      {provider === p && (
+                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-gray-900 animate-pulse"></span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Mode Selector */}
-            <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
-              {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${mode === m
-                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                    }`}
-                >
-                  {m.charAt(0).toUpperCase() + m.slice(1)}
-                </button>
-              ))}
+            <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
+              <label className="text-xs font-semibold text-gray-400 mb-2 block uppercase tracking-wider">
+                Режим
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMode(m)}
+                    className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${mode === m
+                      ? 'bg-blue-600 text-white shadow-lg glow'
+                      : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                      }`}
+                  >
+                    {m === 'general' ? 'Общий' : m === 'corrector' ? 'Корректор' : m === 'coder' ? 'Код' : 'Перевод'}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {status === RecorderStatus.RECORDING ? (
-              <button
-                onClick={stopRecording}
-                className="group relative flex items-center justify-center w-14 h-14 rounded-full bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30 transition-all duration-300 transform hover:scale-105"
-              >
-                <span className="absolute w-full h-full rounded-full bg-red-500 animate-ping opacity-75"></span>
-                <Square className="w-6 h-6 text-white fill-current relative z-10" />
-              </button>
-            ) : (
-              <button
-                onClick={startRecording}
-                disabled={status === RecorderStatus.PROCESSING}
-                className={`flex items-center justify-center w-14 h-14 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105 ${status === RecorderStatus.PROCESSING
-                  ? 'bg-gray-700 cursor-not-allowed opacity-50'
-                  : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'
-                  }`}
-              >
-                <Mic className="w-7 h-7 text-white" />
-              </button>
-            )}
-          </div>
-
-          {/* Status Text */}
-          <div className="text-center min-h-[1.5rem]">
-            {status === RecorderStatus.RECORDING && (
-              <span className="text-red-400 font-medium text-sm animate-pulse flex items-center justify-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                Recording...
-              </span>
-            )}
-            {status === RecorderStatus.IDLE && !error && (
-              <span className="text-gray-500 text-sm">Tap mic to speak</span>
-            )}
-            {error && (
-              <div className="text-red-400 text-sm flex items-center justify-center gap-2 bg-red-900/20 py-2 px-4 rounded-xl mx-auto max-w-full">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span className="text-center break-words">{error}</span>
-              </div>
-            )}
-            {copyError && (
-              <div className="text-amber-400 text-sm flex items-center justify-center gap-2 animate-in fade-in">
-                <AlertCircle className="w-4 h-4" />
-                Auto-copy failed. Please copy manually.
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-gray-800 pt-6">
-            <TranscriptionResult
-              text={text}
-              status={status}
-              copied={copied}
-              onManualCopy={() => text && copyToClipboard(text)}
-            />
-            {lastProvider && (
-              <div className="mt-2 text-center text-xs text-gray-500">
-                Transcribed by: <span className="text-blue-300 font-semibold">{lastProvider}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Model availability (shows which models are configured and which will be used) */}
-          <div className="px-6 pt-4 pb-6 text-center text-xs text-gray-400">
-            <div>
-              <div className="flex items-center justify-center gap-2">
-                Primary: <span className="font-semibold text-gray-200">{hasGemini ? `Gemini (${geminiModel})` : 'Gemini (not configured)'}</span>
-                <span className="ml-2 inline-flex items-center gap-2">
-                  <HealthDot status={geminiHealth?.status} />
-                </span>
-              </div>
-              {geminiHealth?.detail && (
-                <div className="text-xs text-gray-500 mt-1">{geminiHealth.detail}</div>
-              )}
-              <div className="mt-1 flex items-center justify-center gap-2">
-                Fallback: <span className="font-semibold text-gray-200">{isGroq ? `Groq (${txModel})` : (hasOpenAI ? `OpenAI (${openaiModel})` : 'OpenAI (not configured)')}</span>
-                <span className="ml-2 inline-flex items-center gap-2">
-                  <HealthDot status={openaiHealth?.status} />
-                  {hasOpenAI && (
-                    <span className="ml-2 text-xs text-gray-400">{fallbackEnabled ? '(enabled)' : '(disabled)'}</span>
-                  )}
-                </span>
-              </div>
-
-              <div className="mt-3">
-                <button onClick={refreshHealth} disabled={refreshingHealth} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs">
-                  {refreshingHealth ? (<span className="flex items-center gap-2"><RotateCw className="w-4 h-4 animate-spin" /> Refreshing...</span>) : (<span className="flex items-center gap-2"><RotateCw className="w-4 h-4" /> Refresh status</span>)}
+            {/* Record Button */}
+            <div className="flex justify-center pt-2">
+              {status === RecorderStatus.RECORDING ? (
+                <button
+                  onClick={stopRecording}
+                  className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 shadow-2xl shadow-red-500/50 transition-all duration-300 transform hover:scale-105 active:scale-95"
+                >
+                  <span className="absolute w-full h-full rounded-full bg-red-500 animate-ping opacity-30"></span>
+                  <Square className="w-8 h-8 text-white fill-current relative z-10" />
                 </button>
-              </div>
+              ) : (
+                <button
+                  onClick={startRecording}
+                  disabled={status === RecorderStatus.PROCESSING}
+                  className={`flex items-center justify-center w-20 h-20 rounded-full shadow-2xl transition-all duration-300 transform hover:scale-105 active:scale-95 ${status === RecorderStatus.PROCESSING
+                    ? 'bg-gray-700 cursor-not-allowed opacity-50'
+                    : 'bg-gradient-primary shadow-blue-500/50 hover:shadow-blue-500/70 glow-hover'
+                    }`}
+                >
+                  <Mic className="w-9 h-9 text-white" />
+                </button>
+              )}
+            </div>
+
+            {/* Status Text */}
+            <div className="text-center min-h-[2rem] flex items-center justify-center">
+              {status === RecorderStatus.RECORDING && (
+                <span className="text-red-400 font-medium text-sm animate-pulse flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                  Идет запись...
+                </span>
+              )}
+              {isProcessingPunctuation && (
+                <span className="text-blue-400 font-medium text-sm flex items-center gap-2 animate-fade-in">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                  Исправление пунктуации...
+                </span>
+              )}
+              {status === RecorderStatus.IDLE && !error && !isProcessingPunctuation && (
+                <span className="text-gray-500 text-sm">Нажмите микрофон или пробел</span>
+              )}
+              {error && (
+                <div className="glass-strong text-red-400 text-sm flex items-center gap-2 py-2 px-4 rounded-xl border border-red-500/30 animate-slide-down">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+              {copyError && (
+                <div className="text-amber-400 text-sm flex items-center gap-2 animate-fade-in">
+                  <AlertCircle className="w-4 h-4" />
+                  Автокопирование не удалось
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* Right Column - Results */}
+          <div className="lg:col-span-2">
+            <div className="glass rounded-2xl p-6 shadow-xl border border-gray-800/50 min-h-[500px]">
+              <TranscriptionResult
+                text={text}
+                status={status}
+                copied={copied}
+                onManualCopy={() => text && copyToClipboard(text)}
+              />
+
+
+              {lastProvider && (
+                <div className="mt-4 pt-4 border-t border-gray-800/50">
+                  <div className="flex items-center justify-center gap-4 text-xs">
+                    <span className="text-gray-500">
+                      Обработано через:{' '}
+                      <span className="text-blue-400 font-semibold">{lastProvider}</span>
+                    </span>
+                    {text && !isProcessingPunctuation && (
+                      <span className="flex items-center gap-1 px-2 py-1 bg-green-500/10 text-green-400 rounded-full border border-green-500/30">
+                        <Check className="w-3 h-3" />
+                        Пунктуация исправлена
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
         </div>
-      </div>
 
-      <p className="mt-8 text-gray-600 text-xs">
-        Powered by Gemini 2.5 Flash {isGroq ? '& Groq' : '& OpenAI'}
-      </p>
+        {/* Footer - Model Info */}
+        <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">Основной:</span>
+                <span className="font-semibold text-gray-200">
+                  {hasGemini ? `Gemini (${geminiModel})` : 'Не настроен'}
+                </span>
+                <HealthDot status={geminiHealth?.status} />
+              </div>
+
+              <div className="h-4 w-px bg-gray-700"></div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">Резервный:</span>
+                <span className="font-semibold text-gray-200">
+                  {isGroq ? `Groq (${txModel})` : hasOpenAI ? `OpenAI (${openaiModel})` : 'Не настроен'}
+                </span>
+                <HealthDot status={openaiHealth?.status} />
+                {hasOpenAI && (
+                  <span className="text-gray-500">
+                    ({fallbackEnabled ? 'вкл' : 'выкл'})
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={refreshHealth}
+              disabled={refreshingHealth}
+              className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-700/50 rounded-lg transition-all interactive text-gray-400 hover:text-gray-200"
+            >
+              <RotateCw className={`w-4 h-4 ${refreshingHealth ? 'animate-spin' : ''}`} />
+              {refreshingHealth ? 'Обновление...' : 'Обновить статус'}
+            </button>
+          </div>
+        </div>
+
+        {/* Powered by */}
+        <p className="text-center text-gray-600 text-xs">
+          Powered by Gemini 2.5 Flash {isGroq ? '& Groq' : '& OpenAI'}
+        </p>
+
+      </div>
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 };
 
-// Small health indicator dot component
+// Health indicator dot component
 const HealthDot: React.FC<{ status?: string | null }> = ({ status }) => {
   const s = (status || '').toLowerCase();
-  if (s === 'ok') return <span className="w-3 h-3 inline-block rounded-full bg-green-400" title="OK"></span>;
-  if (s === 'rate_limit' || s === 'degraded') return <span className="w-3 h-3 inline-block rounded-full bg-yellow-400" title={status}></span>;
-  if (s === 'auth' || s === 'unreachable') return <span className="w-3 h-3 inline-block rounded-full bg-red-500" title={status}></span>;
-  return <span className="w-3 h-3 inline-block rounded-full bg-gray-600" title="unknown"></span>;
+  if (s === 'ok') return <span className="w-2 h-2 inline-block rounded-full bg-green-400 shadow-lg shadow-green-400/50" title="OK"></span>;
+  if (s === 'rate_limit' || s === 'degraded') return <span className="w-2 h-2 inline-block rounded-full bg-yellow-400 shadow-lg shadow-yellow-400/50" title={status}></span>;
+  if (s === 'auth' || s === 'unreachable') return <span className="w-2 h-2 inline-block rounded-full bg-red-500 shadow-lg shadow-red-500/50" title={status}></span>;
+  return <span className="w-2 h-2 inline-block rounded-full bg-gray-600" title="unknown"></span>;
 };
 
 export default App;

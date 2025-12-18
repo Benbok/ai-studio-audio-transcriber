@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -51,8 +51,11 @@ function createWindow() {
 
   // Create the browser window
   mainWindow = new BrowserWindow({
-    width: 500,
-    height: 800,
+    width: 1280,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 768,
+    center: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -62,6 +65,8 @@ function createWindow() {
     icon: path.join(__dirname, '..', 'assets', 'icon.png'), // Optional: add icon later
     autoHideMenuBar: true,
     titleBarStyle: 'default',
+    backgroundColor: '#0a0a0f',
+    show: false, // Don't show until ready
   });
 
   // Store env vars for preload script access
@@ -84,6 +89,11 @@ function createWindow() {
     const distIndexPath = path.join(appPath, 'dist', 'index.html');
     mainWindow.loadFile(distIndexPath);
   }
+
+  // Show window when ready (smooth appearance)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
 
   // Handle window closed
   mainWindow.on('closed', () => {
@@ -117,3 +127,28 @@ app.on('web-contents-created', (event, contents) => {
   });
 });
 
+// IPC Handlers for Mini Mode
+ipcMain.handle('toggle-mini-mode', (event, isMini) => {
+  if (!mainWindow) return;
+
+  if (isMini) {
+    // Switch to Mini Mode
+    mainWindow.setMinimumSize(400, 600);
+    mainWindow.setSize(400, 600, true);
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.setResizable(false);
+  } else {
+    // Switch back to Normal Mode
+    mainWindow.setResizable(true);
+    mainWindow.setMinimumSize(1024, 768);
+    mainWindow.setSize(1280, 900, true);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.center();
+  }
+});
+
+ipcMain.handle('set-always-on-top', (event, value) => {
+  if (mainWindow) {
+    mainWindow.setAlwaysOnTop(value);
+  }
+});
