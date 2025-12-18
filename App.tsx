@@ -49,7 +49,7 @@ const App: React.FC = () => {
   const [copyError, setCopyError] = useState<boolean>(false);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [mode, setMode] = useState<TranscriptionMode>('general');
-  const [provider, setProvider] = useState<TranscriptionProvider>('gemini');
+  const [provider, setProvider] = useState<TranscriptionProvider>('groq');
   const [tone, setTone] = useState<TonePreset>('default');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -213,7 +213,7 @@ const App: React.FC = () => {
 
       const options: MediaRecorderOptions = {
         mimeType,
-        audioBitsPerSecond: 64000
+        audioBitsPerSecond: 24000 // Optimized for voice (was 64000)
       };
 
       const mediaRecorder = new MediaRecorder(audioStream, options);

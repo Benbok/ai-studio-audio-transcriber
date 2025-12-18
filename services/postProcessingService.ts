@@ -34,21 +34,14 @@ export function setPostProcessingApiKey(apiKey: string) {
 
 /**
  * Получить клиент Gemini
+ * ОПТИМИЗАЦИЯ: Теперь требует предварительную инициализацию через setPostProcessingApiKey
+ * Это убирает микрозадержки от повторного чтения localStorage/env на каждый вызов
  */
 function getAI() {
     if (!ai) {
-        // Попытка получить ключ из переменных окружения
-        const env = (import.meta as any).env || {};
-        const electronEnv = typeof window !== 'undefined' ? ((window as any).electronEnv || {}) : {};
-        const key = electronEnv.GEMINI_API_KEY || electronEnv.VITE_GEMINI_API_KEY || env.VITE_GEMINI_API_KEY;
-
-        if (key) {
-            setPostProcessingApiKey(key);
-        } else {
-            throw new Error('Gemini API key not configured for post-processing');
-        }
+        throw new Error('Gemini API client not initialized. Call setPostProcessingApiKey() first.');
     }
-    return ai!;
+    return ai;
 }
 
 /**

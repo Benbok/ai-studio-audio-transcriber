@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Pause, Trash2, RotateCw, Copy, X } from 'lucide-react';
-import { RecordingMetadata, getAllRecordings, deleteRecording, getRecordingAudio } from '../services/storageService';
+import { RecordingMetadata, getAllRecordings, deleteRecording, getRecordingAudio, clearAllRecordings } from '../services/storageService';
 import { TonePreset } from '../types';
+import ConfirmDialog from './ConfirmDialog';
 
 interface RecordingsListProps {
     isOpen: boolean;
@@ -14,6 +15,9 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
     const [playingId, setPlayingId] = useState<number | null>(null);
     const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
     const [retranscribeTarget, setRetranscribeTarget] = useState<RecordingMetadata | null>(null);
+
+    // Confirmation Dialog State
+    const [confirmTarget, setConfirmTarget] = useState<{ id: number | 'all'; type: 'delete' | 'clear' } | null>(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -59,18 +63,37 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
         setPlayingId(recording.id!);
     };
 
-    const handleDelete = async (id: number) => {
-        if (confirm('Удалить эту запись?')) {
-            try {
+    const handleDelete = (id: number) => {
+        setConfirmTarget({ id, type: 'delete' });
+    };
+
+    const handleClearAll = () => {
+        setConfirmTarget({ id: 'all', type: 'clear' });
+    };
+
+    const executeDelete = async () => {
+        if (!confirmTarget) return;
+
+        try {
+            if (confirmTarget.id === 'all') {
+                await clearAllRecordings();
+                if (audioElement) {
+                    audioElement.pause();
+                    setPlayingId(null);
+                }
+            } else {
+                const id = confirmTarget.id;
                 await deleteRecording(id);
-                await loadRecordings();
                 if (playingId === id) {
                     audioElement?.pause();
                     setPlayingId(null);
                 }
-            } catch (err) {
-                console.error('Failed to delete recording:', err);
             }
+            await loadRecordings();
+        } catch (err) {
+            console.error('Action failed:', err);
+        } finally {
+            setConfirmTarget(null);
         }
     };
 
@@ -214,8 +237,19 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 border-t border-gray-800/50 text-center text-xs text-gray-500">
-                    Всего записей: {recordings.length}
+                <div className="p-4 border-t border-gray-800/50 flex items-center justify-between">
+                    <div className="text-xs text-gray-500">
+                        Всего записей: {recordings.length}
+                    </div>
+                    {recordings.length > 0 && (
+                        <button
+                            onClick={handleClearAll}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 transition-colors interactive"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Очистить историю
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -260,6 +294,18 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
                     </div>
                 </div>
             )}
+            {/* Confirmation Dialog */}
+            <ConfirmDialog
+                isOpen={!!confirmTarget}
+                title={confirmTarget?.type === 'clear' ? 'Очистить историю?' : 'Удалить запись?'}
+                message={confirmTarget?.type === 'clear'
+                    ? 'Это действие безвозвратно удалит все сохраненные записи из базы данных.'
+                    : 'Вы уверены, что хотите удалить эту запись и связанный с ней аудиофайл?'}
+                confirmLabel={confirmTarget?.type === 'clear' ? 'Очистить всё' : 'Удалить'}
+                onConfirm={executeDelete}
+                onCancel={() => setConfirmTarget(null)}
+                variant="danger"
+            />
         </div>
     );
 };
