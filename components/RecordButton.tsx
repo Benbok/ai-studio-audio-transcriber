@@ -86,7 +86,7 @@ const RecordButton: React.FC<RecordButtonProps> = ({
             onMouseLeave={handleMouseLeave}
             style={!isProcessing ? reactiveStyle : undefined}
             className={`
-        ${sizeClasses} rounded-full flex items-center justify-center shadow-2xl transition-all duration-200 transform group
+        ${sizeClasses} rounded-full flex items-center justify-center shadow-2xl transition-all duration-700 ease-in-out transform group
         ${isProcessing
                     ? 'bg-gray-700 cursor-not-allowed opacity-50'
                     : 'bg-gradient-primary shadow-blue-500/50 hover:scale-105'

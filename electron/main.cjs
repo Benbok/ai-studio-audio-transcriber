@@ -131,19 +131,63 @@ app.on('web-contents-created', (event, contents) => {
 ipcMain.handle('toggle-mini-mode', (event, isMini) => {
   if (!mainWindow) return;
 
+  console.log('[MINI-MODE] Toggle called, isMini:', isMini);
+  console.log('[MINI-MODE] Current size:', mainWindow.getSize());
+  console.log('[MINI-MODE] isMaximized:', mainWindow.isMaximized());
+  console.log('[MINI-MODE] isFullScreen:', mainWindow.isFullScreen());
+
   if (isMini) {
     // Switch to Mini Mode
-    mainWindow.setMinimumSize(320, 500);
-    mainWindow.setSize(320, 500, true);
-    mainWindow.setAlwaysOnTop(true);
-    mainWindow.setResizable(false);
+    if (mainWindow.isMaximized()) {
+      console.log('[MINI-MODE] Unmaximizing...');
+      mainWindow.unmaximize();
+    }
+    if (mainWindow.isFullScreen()) {
+      console.log('[MINI-MODE] Exiting fullscreen...');
+      mainWindow.setFullScreen(false);
+    }
+
+    // Use setTimeout to ensure unmaximize completes
+    setTimeout(() => {
+      console.log('[MINI-MODE] Applying mini size...');
+
+      // IMPORTANT: Reset resizing constraints to allow shrinking
+      mainWindow.setResizable(true);
+      mainWindow.setMinimumSize(1, 1);
+      mainWindow.setMaximumSize(10000, 10000);
+
+      // Force resize using setBounds (more reliable on Windows)
+      mainWindow.setBounds({ width: 320, height: 500 });
+
+      console.log('[MINI-MODE] Size after setBounds:', mainWindow.getSize());
+
+      // Lock dimensions
+      mainWindow.setMinimumSize(320, 500);
+      mainWindow.setMaximumSize(320, 500);
+
+      mainWindow.setAlwaysOnTop(true);
+      mainWindow.setResizable(false);
+
+      console.log('[MINI-MODE] Mini mode applied successfully');
+    }, 200);
+
   } else {
     // Switch back to Normal Mode
+    console.log('[MINI-MODE] Switching to normal mode...');
+
     mainWindow.setResizable(true);
+
+    // Reset constraints
+    mainWindow.setMinimumSize(1, 1);
+    mainWindow.setMaximumSize(10000, 10000);
+
+    mainWindow.setBounds({ width: 1280, height: 900 });
     mainWindow.setMinimumSize(1024, 768);
-    mainWindow.setSize(1280, 900, true);
+
     mainWindow.setAlwaysOnTop(false);
     mainWindow.center();
+
+    console.log('[MINI-MODE] Normal mode applied, size:', mainWindow.getSize());
   }
 });
 

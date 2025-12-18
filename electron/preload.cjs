@@ -9,31 +9,11 @@ ipcRenderer.on('env-vars', (event, vars) => {
   envVars = vars || {};
 });
 
-// Expose environment variables via contextBridge
-// Use a Proxy to allow dynamic updates after initial exposure
-const electronEnvProxy = new Proxy({}, {
-  get: (target, prop) => {
-    return envVars[prop];
-  },
-  ownKeys: () => {
-    return Object.keys(envVars);
-  },
-  has: (target, prop) => {
-    return prop in envVars;
-  },
-  getOwnPropertyDescriptor: (target, prop) => {
-    if (prop in envVars) {
-      return {
-        enumerable: true,
-        configurable: true,
-        value: envVars[prop]
-      };
-    }
-    return undefined;
-  }
+// Expose a function to get environment variables (Proxy can't be cloned by contextBridge)
+contextBridge.exposeInMainWorld('electronEnv', {
+  get: (key) => envVars[key],
+  getAll: () => ({ ...envVars })
 });
-
-contextBridge.exposeInMainWorld('electronEnv', electronEnvProxy);
 
 contextBridge.exposeInMainWorld('electronAPI', {
   toggleMiniMode: (isMini) => ipcRenderer.invoke('toggle-mini-mode', isMini),
