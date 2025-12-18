@@ -12,3 +12,12 @@ export enum RecorderStatus {
   PROCESSING = 'PROCESSING',
   COMPLETED = 'COMPLETED',
 }
+
+// Electron environment variables interface
+declare global {
+  interface Window {
+    electronEnv?: {
+      [key: string]: string;
+    };
+  }
+}

@@ -1,19 +1,20 @@
 // Lightweight OpenAI helper using fetch so it can be used in browser or Node (if fetch exists)
 // Supports simple chat completions and optional audio transcription (Whisper) fallback.
 
-// Read env vars from Vite's import.meta.env (client) first, then fallback to process.env (Node)
+// Read env vars: Electron > Vite > process.env
 const _env = typeof import.meta !== 'undefined' ? (import.meta as any).env : {};
-const OPENAI_API_KEY = _env.VITE_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
-const OPENAI_BASE_URL = _env.VITE_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com";
-const OPENAI_CHAT_MODEL = _env.VITE_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
-const OPENAI_TRANSCRIBE_MODEL = _env.VITE_OPENAI_TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1";
+const electronEnv = typeof window !== 'undefined' ? (window.electronEnv || {}) : {};
+const OPENAI_API_KEY = electronEnv.OPENAI_API_KEY || electronEnv.VITE_OPENAI_API_KEY || _env.VITE_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
+const OPENAI_BASE_URL = electronEnv.OPENAI_BASE_URL || electronEnv.VITE_OPENAI_BASE_URL || _env.VITE_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com";
+const OPENAI_CHAT_MODEL = electronEnv.OPENAI_MODEL || electronEnv.VITE_OPENAI_MODEL || _env.VITE_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_TRANSCRIBE_MODEL = electronEnv.OPENAI_TRANSCRIBE_MODEL || electronEnv.VITE_OPENAI_TRANSCRIBE_MODEL || _env.VITE_OPENAI_TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1";
 
 // Dedicated Transcription Configuration (allows using Groq for Voice while keeping Theia/DeepSeek for Chat)
-export let TRANSCRIPTION_API_KEY = _env.VITE_TRANSCRIPTION_API_KEY || _env.VITE_GROQ_API_KEY || OPENAI_API_KEY;
-export let TRANSCRIPTION_BASE_URL = _env.VITE_TRANSCRIPTION_BASE_URL || ( // if user set specific groq key but no url, auto-set groq url
-  (_env.VITE_GROQ_API_KEY) ? "https://api.groq.com/openai/v1" : OPENAI_BASE_URL
+export let TRANSCRIPTION_API_KEY = electronEnv.TRANSCRIPTION_API_KEY || electronEnv.VITE_TRANSCRIPTION_API_KEY || electronEnv.GROQ_API_KEY || electronEnv.VITE_GROQ_API_KEY || _env.VITE_TRANSCRIPTION_API_KEY || _env.VITE_GROQ_API_KEY || OPENAI_API_KEY;
+export let TRANSCRIPTION_BASE_URL = electronEnv.TRANSCRIPTION_BASE_URL || electronEnv.VITE_TRANSCRIPTION_BASE_URL || _env.VITE_TRANSCRIPTION_BASE_URL || ( // if user set specific groq key but no url, auto-set groq url
+  (electronEnv.GROQ_API_KEY || electronEnv.VITE_GROQ_API_KEY || _env.VITE_GROQ_API_KEY) ? "https://api.groq.com/openai/v1" : OPENAI_BASE_URL
 );
-export let TRANSCRIPTION_MODEL = _env.VITE_TRANSCRIPTION_MODEL || "whisper-large-v3"; // Default to a good model if using dedicated config
+export let TRANSCRIPTION_MODEL = electronEnv.TRANSCRIPTION_MODEL || electronEnv.VITE_TRANSCRIPTION_MODEL || _env.VITE_TRANSCRIPTION_MODEL || "whisper-large-v3"; // Default to a good model if using dedicated config
 
 export const setTranscriptionConfig = (key: string, url?: string, model?: string) => {
   if (key) TRANSCRIPTION_API_KEY = key;
