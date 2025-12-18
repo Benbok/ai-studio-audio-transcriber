@@ -133,8 +133,8 @@ ipcMain.handle('toggle-mini-mode', (event, isMini) => {
 
   if (isMini) {
     // Switch to Mini Mode
-    mainWindow.setMinimumSize(400, 600);
-    mainWindow.setSize(400, 600, true);
+    mainWindow.setMinimumSize(320, 500);
+    mainWindow.setSize(320, 500, true);
     mainWindow.setAlwaysOnTop(true);
     mainWindow.setResizable(false);
   } else {

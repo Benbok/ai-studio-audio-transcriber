@@ -1,16 +1,26 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon } from 'lucide-react';
+import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor } from 'lucide-react';
 import { RecorderStatus } from './types';
 import { transcribeAudio, TranscriptionMode, TranscriptionProvider, setGeminiApiKey } from './services/geminiService';
 import { setTranscriptionConfig } from './services/openaiService';
 import { fixPunctuation, setPostProcessingApiKey } from './services/postProcessingService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
+import RecordButton from './components/RecordButton';
 import SettingsModal from './components/SettingsModal';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RecorderStatus>(RecorderStatus.IDLE);
   const [isProcessingPunctuation, setIsProcessingPunctuation] = useState<boolean>(false);
+  const [isMiniMode, setIsMiniMode] = useState<boolean>(false);
+
+  const toggleMiniMode = async () => {
+    const newMode = !isMiniMode;
+    setIsMiniMode(newMode);
+    if ((window as any).electronAPI?.toggleMiniMode) {
+      await (window as any).electronAPI.toggleMiniMode(newMode);
+    }
+  };
 
   // Compute model/provider availability for UI
   const env = (import.meta as any).env || {};
@@ -299,260 +309,256 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-purple-900/20 text-white flex items-center justify-center p-6">
-      <div className="w-full max-w-4xl space-y-6 animate-fade-in">
+    <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-purple-900/20 text-white flex items-center justify-center ${isMiniMode ? 'p-2' : 'p-6'}`}>
+      <div className={`w-full ${isMiniMode ? 'max-w-sm h-[580px] flex flex-col' : 'max-w-4xl space-y-6'} animate-fade-in`}>
 
-        {/* Header Card */}
-        <div className="glass rounded-3xl p-6 shadow-2xl border border-gray-800/50 relative overflow-hidden">
-          {/* Decorative gradient overlay */}
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-primary"></div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold gradient-text mb-1">
-                Voice Scribe
-              </h1>
-              <p className="text-gray-400 text-sm">
-                Профессиональная транскрибация RU/EN с автокопированием
-              </p>
+        {isMiniMode ? (
+          /* ================= MINI MODE UI ================= */
+          <div className="flex-1 flex flex-col space-y-4">
+            {/* Mini Header */}
+            <div className="glass rounded-2xl p-3 flex items-center justify-between border border-gray-800/50">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
+                  <Mic className="w-4 h-4 text-white" />
+                </div>
+                <span className="font-bold text-sm">Scribe Mini</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={toggleMiniMode}
+                  className="p-2 glass rounded-lg hover:border-blue-500/50 transition-all interactive"
+                  title="Выход из мини-режима"
+                >
+                  <Monitor className="w-4 h-4 text-blue-400" />
+                </button>
+                <button
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-2 glass rounded-lg hover:border-blue-500/50 transition-all interactive"
+                >
+                  <SettingsIcon className="w-4 h-4 text-gray-400" />
+                </button>
+              </div>
             </div>
 
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-3 glass rounded-xl hover:border-blue-500/50 transition-all interactive"
-            >
-              <SettingsIcon className="w-5 h-5 text-gray-400" />
-            </button>
+            {/* Record & Control Center */}
+            <div className="glass rounded-3xl p-6 flex flex-col items-center justify-center border border-blue-500/20 shadow-lg shadow-blue-500/5 relative overflow-hidden">
+              {/* Simple Visualizer Bar */}
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gray-800/50">
+                {status === RecorderStatus.RECORDING && <div className="h-full bg-blue-500 animate-pulse" style={{ width: '100%' }}></div>}
+              </div>
+
+              <div className="relative mb-4">
+                <RecordButton
+                  status={status}
+                  onClick={status === RecorderStatus.RECORDING ? stopRecording : startRecording}
+                  size="large"
+                />
+
+                {status === RecorderStatus.RECORDING && (
+                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 glass-strong px-2 py-0.5 rounded-full text-[10px] font-mono text-red-400 border border-red-500/30">
+                    {formatTime(elapsedTime)}
+                  </div>
+                )}
+              </div>
+
+              {/* Status Message */}
+              <div className="text-center h-4">
+                {status === RecorderStatus.RECORDING && <span className="text-[10px] text-red-400 animate-pulse font-medium uppercase tracking-tighter">Recording...</span>}
+                {isProcessingPunctuation && <span className="text-[10px] text-blue-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Fixing Punctuation...</span>}
+                {status === RecorderStatus.IDLE && !isProcessingPunctuation && <span className="text-[10px] text-gray-500 uppercase tracking-widest">Ready</span>}
+              </div>
+            </div>
+
+            {/* Mini Result Area */}
+            <div className="flex-1 glass rounded-3xl p-4 border border-gray-800/50 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto mb-2 custom-scrollbar">
+                <TranscriptionResult
+                  text={text}
+                  status={status}
+                  copied={copied}
+                  onManualCopy={() => text && copyToClipboard(text)}
+                  compact={true}
+                />
+              </div>
+
+              {text && (
+                <div className="flex items-center justify-between pt-2 border-t border-gray-800/20 text-[10px] text-gray-500 font-mono">
+                  <span>{text.length} chars</span>
+                  <button
+                    onClick={() => copyToClipboard(text)}
+                    className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
+                    title="Копировать"
+                  >
+                    <Copy className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        ) : (
+          /* ================= NORMAL MODE UI ================= */
+          <>
+            {/* Header Card */}
+            <div className="glass rounded-3xl p-6 shadow-2xl border border-gray-800/50 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-primary"></div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-3xl font-bold gradient-text mb-1">Voice Scribe</h1>
+                  <p className="text-gray-400 text-sm">Профессиональная транскрибация RU/EN с автокопированием</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={toggleMiniMode}
+                    className="p-3 glass rounded-xl hover:border-blue-500/50 transition-all interactive"
+                    title="Мини-режим"
+                  >
+                    <Monitor className="w-5 h-5 text-gray-400" />
+                  </button>
+                  <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="p-3 glass rounded-xl hover:border-blue-500/50 transition-all interactive"
+                  >
+                    <SettingsIcon className="w-5 h-5 text-gray-400" />
+                  </button>
+                </div>
+              </div>
+            </div>
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Main Content Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left Column */}
+              <div className="lg:col-span-1 space-y-4">
+                <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50 h-32 relative overflow-hidden">
+                  {status === RecorderStatus.RECORDING ? (
+                    <Visualizer stream={stream} isRecording={true} />
+                  ) : (
+                    <div className="flex items-center justify-center h-full opacity-30">
+                      <div className="flex gap-2 items-end">
+                        {[20, 35, 25, 40, 30, 45, 25, 35].map((h, i) => (
+                          <div key={i} className="w-2 bg-gray-600 rounded-full" style={{ height: `${h}px` }} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {status === RecorderStatus.RECORDING && (
+                    <div className="absolute bottom-3 right-3 glass-strong px-3 py-1 rounded-full text-xs font-mono text-red-400 border border-red-500/30">
+                      ⏺ {formatTime(elapsedTime)}
+                    </div>
+                  )}
+                </div>
 
-          {/* Left Column - Controls */}
-          <div className="lg:col-span-1 space-y-4">
-
-            {/* Visualizer Card */}
-            <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50 h-32 relative overflow-hidden">
-              {status === RecorderStatus.RECORDING ? (
-                <Visualizer stream={stream} isRecording={true} />
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <div className="flex gap-2 items-end">
-                    {[20, 35, 25, 40, 30, 45, 25, 35].map((height, i) => (
-                      <div
-                        key={i}
-                        className="w-2 bg-gradient-to-t from-gray-700 to-gray-600 rounded-full transition-all duration-300"
-                        style={{ height: `${height}px` }}
-                      />
+                <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
+                  <label className="text-xs font-semibold text-gray-400 mb-3 block uppercase flex items-center justify-between">
+                    <span>Провайдер</span>
+                    {provider && <span className="text-[10px] px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full border border-green-500/30">● АКТИВЕН</span>}
+                  </label>
+                  <div className="flex gap-2">
+                    {(['gemini', 'groq'] as TranscriptionProvider[]).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setProvider(p)}
+                        className={`relative flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${provider === p ? 'bg-gradient-primary text-white scale-105 border-2 border-blue-400' : 'bg-gray-800/50 text-gray-400'}`}
+                      >
+                        {p === 'gemini' ? '✨ Gemini' : '⚡ Groq'}
+                      </button>
                     ))}
                   </div>
                 </div>
-              )}
 
-              {/* Timer Overlay */}
-              {status === RecorderStatus.RECORDING && (
-                <div className="absolute bottom-3 right-3 glass-strong px-3 py-1 rounded-full text-xs font-mono text-red-400 border border-red-500/30 animate-glow-pulse">
-                  ⏺ {formatTime(elapsedTime)}
+                {/* Mode Selector */}
+                <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
+                  <label className="text-xs font-semibold text-gray-400 mb-2 block uppercase tracking-wider">
+                    Режим (Промпт)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setMode(m)}
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${mode === m
+                          ? 'bg-blue-600 text-white shadow-lg glow'
+                          : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                          }`}
+                      >
+                        {m === 'general' ? 'Общий' : m === 'corrector' ? 'Корректор' : m === 'coder' ? 'Код' : 'Перевод'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Provider Selector */}
-            <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
-              <label className="text-xs font-semibold text-gray-400 mb-3 block uppercase tracking-wider flex items-center justify-between">
-                <span>Провайдер транскрибации</span>
-                {provider && (
-                  <span className="text-[10px] px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full border border-green-500/30 animate-pulse">
-                    ● АКТИВЕН
-                  </span>
-                )}
-              </label>
-              <div className="flex gap-2">
-                {(['gemini', 'groq'] as TranscriptionProvider[]).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setProvider(p)}
-                    className={`relative flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${provider === p
-                      ? 'bg-gradient-primary text-white shadow-xl shadow-blue-500/50 scale-105 border-2 border-blue-400'
-                      : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border-2 border-transparent'
-                      }`}
-                  >
-                    <div className="flex flex-col items-center gap-1">
-                      {p === 'gemini' ? (
-                        <>
-                          <span className="text-lg">✨</span>
-                          <span>Gemini</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-lg">⚡</span>
-                          <span>Groq + Llama</span>
-                        </>
-                      )}
-                      {provider === p && (
-                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-gray-900 animate-pulse"></span>
-                      )}
+                <div className="flex justify-center py-2">
+                  <div className="flex justify-center py-2">
+                    <RecordButton
+                      status={status}
+                      onClick={status === RecorderStatus.RECORDING ? stopRecording : startRecording}
+                      size="normal"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-center min-h-[1.5rem]">
+                  {status === RecorderStatus.RECORDING && <span className="text-red-400 text-sm animate-pulse">● Идет запись...</span>}
+                  {isProcessingPunctuation && <span className="text-blue-400 text-sm animate-pulse">● Исправление пунктуации...</span>}
+                  {error && <span className="text-red-400 text-xs">{error}</span>}
+                </div>
+              </div>
+
+              {/* Right Column */}
+              <div className="lg:col-span-2">
+                <div className="glass rounded-2xl p-6 shadow-xl border border-gray-800/50 min-h-[400px] flex flex-col">
+                  <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <TranscriptionResult text={text} status={status} copied={copied} onManualCopy={() => text && copyToClipboard(text)} />
+                  </div>
+                  {lastProvider && (
+                    <div className="mt-4 pt-4 border-t border-gray-800/50 text-center text-[10px] text-gray-500">
+                      Обработано: <span className="text-blue-400">{lastProvider}</span>
+                      {text && !isProcessingPunctuation && <span className="ml-3 text-green-400">✓ Пунктуация исправлена</span>}
                     </div>
-                  </button>
-                ))}
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Mode Selector */}
+            {/* Footer */}
             <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
-              <label className="text-xs font-semibold text-gray-400 mb-2 block uppercase tracking-wider">
-                Режим
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setMode(m)}
-                    className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${mode === m
-                      ? 'bg-blue-600 text-white shadow-lg glow'
-                      : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                      }`}
-                  >
-                    {m === 'general' ? 'Общий' : m === 'corrector' ? 'Корректор' : m === 'coder' ? 'Код' : 'Перевод'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Record Button */}
-            <div className="flex justify-center pt-2">
-              {status === RecorderStatus.RECORDING ? (
-                <button
-                  onClick={stopRecording}
-                  className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 shadow-2xl shadow-red-500/50 transition-all duration-300 transform hover:scale-105 active:scale-95"
-                >
-                  <span className="absolute w-full h-full rounded-full bg-red-500 animate-ping opacity-30"></span>
-                  <Square className="w-8 h-8 text-white fill-current relative z-10" />
-                </button>
-              ) : (
-                <button
-                  onClick={startRecording}
-                  disabled={status === RecorderStatus.PROCESSING}
-                  className={`flex items-center justify-center w-20 h-20 rounded-full shadow-2xl transition-all duration-300 transform hover:scale-105 active:scale-95 ${status === RecorderStatus.PROCESSING
-                    ? 'bg-gray-700 cursor-not-allowed opacity-50'
-                    : 'bg-gradient-primary shadow-blue-500/50 hover:shadow-blue-500/70 glow-hover'
-                    }`}
-                >
-                  <Mic className="w-9 h-9 text-white" />
-                </button>
-              )}
-            </div>
-
-            {/* Status Text */}
-            <div className="text-center min-h-[2rem] flex items-center justify-center">
-              {status === RecorderStatus.RECORDING && (
-                <span className="text-red-400 font-medium text-sm animate-pulse flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                  Идет запись...
-                </span>
-              )}
-              {isProcessingPunctuation && (
-                <span className="text-blue-400 font-medium text-sm flex items-center gap-2 animate-fade-in">
-                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                  Исправление пунктуации...
-                </span>
-              )}
-              {status === RecorderStatus.IDLE && !error && !isProcessingPunctuation && (
-                <span className="text-gray-500 text-sm">Нажмите микрофон или пробел</span>
-              )}
-              {error && (
-                <div className="glass-strong text-red-400 text-sm flex items-center gap-2 py-2 px-4 rounded-xl border border-red-500/30 animate-slide-down">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
-              {copyError && (
-                <div className="text-amber-400 text-sm flex items-center gap-2 animate-fade-in">
-                  <AlertCircle className="w-4 h-4" />
-                  Автокопирование не удалось
-                </div>
-              )}
-            </div>
-
-          </div>
-
-          {/* Right Column - Results */}
-          <div className="lg:col-span-2">
-            <div className="glass rounded-2xl p-6 shadow-xl border border-gray-800/50 min-h-[500px]">
-              <TranscriptionResult
-                text={text}
-                status={status}
-                copied={copied}
-                onManualCopy={() => text && copyToClipboard(text)}
-              />
-
-
-              {lastProvider && (
-                <div className="mt-4 pt-4 border-t border-gray-800/50">
-                  <div className="flex items-center justify-center gap-4 text-xs">
-                    <span className="text-gray-500">
-                      Обработано через:{' '}
-                      <span className="text-blue-400 font-semibold">{lastProvider}</span>
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Основной:</span>
+                    <span className="font-semibold text-gray-200">
+                      {hasGemini ? `Gemini (${geminiModel})` : 'Не настроен'}
                     </span>
-                    {text && !isProcessingPunctuation && (
-                      <span className="flex items-center gap-1 px-2 py-1 bg-green-500/10 text-green-400 rounded-full border border-green-500/30">
-                        <Check className="w-3 h-3" />
-                        Пунктуация исправлена
+                    <HealthDot status={geminiHealth?.status} />
+                  </div>
+
+                  <div className="h-4 w-px bg-gray-700"></div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Резервный:</span>
+                    <span className="font-semibold text-gray-200">
+                      {isGroq ? `Groq (${txModel})` : hasOpenAI ? `OpenAI (${openaiModel})` : 'Не настроен'}
+                    </span>
+                    <HealthDot status={openaiHealth?.status} />
+                    {hasOpenAI && (
+                      <span className="text-gray-500">
+                        ({fallbackEnabled ? 'вкл' : 'выкл'})
                       </span>
                     )}
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
 
-        </div>
-
-        {/* Footer - Model Info */}
-        <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500">Основной:</span>
-                <span className="font-semibold text-gray-200">
-                  {hasGemini ? `Gemini (${geminiModel})` : 'Не настроен'}
-                </span>
-                <HealthDot status={geminiHealth?.status} />
-              </div>
-
-              <div className="h-4 w-px bg-gray-700"></div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500">Резервный:</span>
-                <span className="font-semibold text-gray-200">
-                  {isGroq ? `Groq (${txModel})` : hasOpenAI ? `OpenAI (${openaiModel})` : 'Не настроен'}
-                </span>
-                <HealthDot status={openaiHealth?.status} />
-                {hasOpenAI && (
-                  <span className="text-gray-500">
-                    ({fallbackEnabled ? 'вкл' : 'выкл'})
-                  </span>
-                )}
+                <button
+                  onClick={refreshHealth}
+                  disabled={refreshingHealth}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-700/50 rounded-lg transition-all interactive text-gray-400 hover:text-gray-200"
+                >
+                  <RotateCw className={`w-4 h-4 ${refreshingHealth ? 'animate-spin' : ''}`} />
+                  {refreshingHealth ? 'Обновление...' : 'Обновить статус'}
+                </button>
               </div>
             </div>
-
-            <button
-              onClick={refreshHealth}
-              disabled={refreshingHealth}
-              className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-700/50 rounded-lg transition-all interactive text-gray-400 hover:text-gray-200"
-            >
-              <RotateCw className={`w-4 h-4 ${refreshingHealth ? 'animate-spin' : ''}`} />
-              {refreshingHealth ? 'Обновление...' : 'Обновить статус'}
-            </button>
-          </div>
-        </div>
-
-        {/* Powered by */}
-        <p className="text-center text-gray-600 text-xs">
-          Powered by Gemini 2.5 Flash {isGroq ? '& Groq' : '& OpenAI'}
-        </p>
-
+          </>
+        )}
       </div>
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
