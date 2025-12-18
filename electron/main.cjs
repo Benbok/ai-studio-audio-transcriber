@@ -127,8 +127,52 @@ app.on('web-contents-created', (event, contents) => {
   });
 });
 
+/**
+ * Smoothly animates window resize from one size to another
+ * @param {BrowserWindow} window - The window to animate
+ * @param {Object} fromBounds - Starting bounds {width, height}
+ * @param {Object} toBounds - Target bounds {width, height}
+ * @param {number} duration - Animation duration in milliseconds
+ */
+function animateWindowResize(window, fromBounds, toBounds, duration = 300) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const deltaWidth = toBounds.width - fromBounds.width;
+    const deltaHeight = toBounds.height - fromBounds.height;
+
+    // Easing function (easeInOutCubic for smooth acceleration/deceleration)
+    const easeInOutCubic = (t) => {
+      return t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    };
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = easeInOutCubic(progress);
+
+      const currentWidth = Math.round(fromBounds.width + deltaWidth * eased);
+      const currentHeight = Math.round(fromBounds.height + deltaHeight * eased);
+
+      window.setBounds({
+        width: currentWidth,
+        height: currentHeight
+      });
+
+      if (progress < 1) {
+        setImmediate(animate);
+      } else {
+        resolve();
+      }
+    };
+
+    animate();
+  });
+}
+
 // IPC Handlers for Mini Mode
-ipcMain.handle('toggle-mini-mode', (event, isMini) => {
+ipcMain.handle('toggle-mini-mode', async (event, isMini) => {
   if (!mainWindow) return;
 
   console.log('[MINI-MODE] Toggle called, isMini:', isMini);
@@ -147,41 +191,61 @@ ipcMain.handle('toggle-mini-mode', (event, isMini) => {
       mainWindow.setFullScreen(false);
     }
 
-    // Use setTimeout to ensure unmaximize completes
-    setTimeout(() => {
-      console.log('[MINI-MODE] Applying mini size...');
+    // Wait for unmaximize to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-      // IMPORTANT: Reset resizing constraints to allow shrinking
-      mainWindow.setResizable(true);
-      mainWindow.setMinimumSize(1, 1);
-      mainWindow.setMaximumSize(10000, 10000);
+    // Get current bounds for animation
+    const currentBounds = mainWindow.getBounds();
+    const targetBounds = { width: 320, height: 500 };
 
-      // Force resize using setBounds (more reliable on Windows)
-      mainWindow.setBounds({ width: 320, height: 500 });
+    console.log('[MINI-MODE] Animating from', currentBounds, 'to', targetBounds);
 
-      console.log('[MINI-MODE] Size after setBounds:', mainWindow.getSize());
+    // IMPORTANT: Reset resizing constraints to allow shrinking
+    mainWindow.setResizable(true);
+    mainWindow.setMinimumSize(1, 1);
+    mainWindow.setMaximumSize(10000, 10000);
 
-      // Lock dimensions
-      mainWindow.setMinimumSize(320, 500);
-      mainWindow.setMaximumSize(320, 500);
+    // Animate resize
+    await animateWindowResize(
+      mainWindow,
+      { width: currentBounds.width, height: currentBounds.height },
+      targetBounds,
+      350 // 350ms animation
+    );
 
-      mainWindow.setAlwaysOnTop(true);
-      mainWindow.setResizable(false);
+    console.log('[MINI-MODE] Size after animation:', mainWindow.getSize());
 
-      console.log('[MINI-MODE] Mini mode applied successfully');
-    }, 200);
+    // Lock dimensions
+    mainWindow.setMinimumSize(320, 500);
+    mainWindow.setMaximumSize(320, 500);
+
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.setResizable(false);
+
+    console.log('[MINI-MODE] Mini mode applied successfully');
 
   } else {
     // Switch back to Normal Mode
     console.log('[MINI-MODE] Switching to normal mode...');
 
+    // Get current bounds for animation
+    const currentBounds = mainWindow.getBounds();
+    const targetBounds = { width: 1280, height: 900 };
+
     mainWindow.setResizable(true);
 
-    // Reset constraints
+    // Reset constraints before animation
     mainWindow.setMinimumSize(1, 1);
     mainWindow.setMaximumSize(10000, 10000);
 
-    mainWindow.setBounds({ width: 1280, height: 900 });
+    // Animate resize
+    await animateWindowResize(
+      mainWindow,
+      { width: currentBounds.width, height: currentBounds.height },
+      targetBounds,
+      350 // 350ms animation
+    );
+
     mainWindow.setMinimumSize(1024, 768);
 
     mainWindow.setAlwaysOnTop(false);
