@@ -18,5 +18,7 @@ contextBridge.exposeInMainWorld('electronEnv', {
 contextBridge.exposeInMainWorld('electronAPI', {
   toggleMiniMode: (isMini) => ipcRenderer.invoke('toggle-mini-mode', isMini),
   setAlwaysOnTop: (value) => ipcRenderer.invoke('set-always-on-top', value),
+  fetchApi: (url, options) => ipcRenderer.invoke('fetch-api', { url, options }),
 });
+
 

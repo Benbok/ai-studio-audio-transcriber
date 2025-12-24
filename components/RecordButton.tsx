@@ -5,7 +5,7 @@ import { RecorderStatus } from '../types';
 interface RecordButtonProps {
     status: RecorderStatus;
     onClick: () => void;
-    size?: 'normal' | 'large';
+    size?: 'small' | 'normal' | 'large';
     className?: string;
 }
 
@@ -46,8 +46,8 @@ const RecordButton: React.FC<RecordButtonProps> = ({
         setGradientPos({ x: 50, y: 50 });
     };
 
-    const sizeClasses = size === 'large' ? 'w-24 h-24' : 'w-20 h-20';
-    const iconSize = size === 'large' ? 'w-10 h-10' : 'w-9 h-9';
+    const sizeClasses = size === 'large' ? 'w-24 h-24' : size === 'small' ? 'w-12 h-12' : 'w-20 h-20';
+    const iconSize = size === 'large' ? 'w-10 h-10' : size === 'small' ? 'w-5 h-5' : 'w-9 h-9';
 
     const isRecording = status === RecorderStatus.RECORDING;
     const isProcessing = status === RecorderStatus.PROCESSING;

@@ -196,7 +196,7 @@ ipcMain.handle('toggle-mini-mode', async (event, isMini) => {
 
     // Get current bounds for animation
     const currentBounds = mainWindow.getBounds();
-    const targetBounds = { width: 320, height: 500 };
+    const targetBounds = { width: 800, height: 120 };
 
     console.log('[MINI-MODE] Animating from', currentBounds, 'to', targetBounds);
 
@@ -216,8 +216,8 @@ ipcMain.handle('toggle-mini-mode', async (event, isMini) => {
     console.log('[MINI-MODE] Size after animation:', mainWindow.getSize());
 
     // Lock dimensions
-    mainWindow.setMinimumSize(320, 500);
-    mainWindow.setMaximumSize(320, 500);
+    mainWindow.setMinimumSize(800, 120);
+    mainWindow.setMaximumSize(800, 120);
 
     mainWindow.setAlwaysOnTop(true);
     mainWindow.setResizable(false);
@@ -260,3 +260,61 @@ ipcMain.handle('set-always-on-top', (event, value) => {
     mainWindow.setAlwaysOnTop(value);
   }
 });
+
+/**
+ * IPC Handler: Fetch API requests without CORS restrictions
+ * This bypasses browser CORS policy by making requests from main process
+ * Uses built-in Node.js http/https modules (no dependencies required)
+ */
+ipcMain.handle('fetch-api', async (event, { url, options }) => {
+  try {
+    const https = require('https');
+    const http = require('http');
+    const urlObj = new URL(url);
+    const protocol = urlObj.protocol === 'https:' ? https : http;
+
+    return await new Promise((resolve) => {
+      const requestOptions = {
+        method: options.method || 'GET',
+        headers: options.headers || {},
+      };
+
+      const req = protocol.request(url, requestOptions, (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            statusText: res.statusMessage || '',
+            text: data,
+          });
+        });
+      });
+
+      req.on('error', (err) => {
+        resolve({
+          ok: false,
+          status: 0,
+          error: err.message || String(err),
+        });
+      });
+
+      // Send request body if present
+      if (options.body) {
+        req.write(options.body);
+      }
+
+      req.end();
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      error: error.message || String(error),
+    };
+  }
+});
+

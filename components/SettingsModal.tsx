@@ -13,9 +13,8 @@ type TabType = 'api' | 'tone' | 'appearance' | 'shortcuts';
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [activeTab, setActiveTab] = useState<TabType>('api');
-    const [geminiKey, setGeminiKey] = useState('');
     const [groqKey, setGroqKey] = useState('');
-    const [deepseekKey, setDeepseekKey] = useState('');
+    const [geminiKey, setGeminiKey] = useState('');
     const [selectedTone, setSelectedTone] = useState<TonePreset>('default');
     const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [msg, setMsg] = useState('');
@@ -23,13 +22,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     // Load from localStorage on open
     useEffect(() => {
         if (isOpen) {
-            const gKey = localStorage.getItem('VITE_GEMINI_API_KEY') || '';
             const grKey = localStorage.getItem('VITE_GROQ_API_KEY') || '';
-            const dsKey = localStorage.getItem('VITE_DEEPSEEK_API_KEY') || '';
+            const gKey = localStorage.getItem('VITE_GEMINI_API_KEY') || '';
             const tone = (localStorage.getItem('TONE_PRESET') || 'default') as TonePreset;
-            setGeminiKey(gKey);
             setGroqKey(grKey);
-            setDeepseekKey(dsKey);
+            setGeminiKey(gKey);
             setSelectedTone(tone);
             setStatus('idle');
             setMsg('');
@@ -42,21 +39,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
         try {
             // Update Services
-            if (geminiKey) setGeminiApiKey(geminiKey);
             if (groqKey) setTranscriptionConfig(groqKey);
+            if (geminiKey) setGeminiApiKey(geminiKey);
 
             // Persist
-            if (geminiKey) localStorage.setItem('VITE_GEMINI_API_KEY', geminiKey);
             if (groqKey) localStorage.setItem('VITE_GROQ_API_KEY', groqKey);
-            if (deepseekKey) localStorage.setItem('VITE_DEEPSEEK_API_KEY', deepseekKey);
+            if (geminiKey) localStorage.setItem('VITE_GEMINI_API_KEY', geminiKey);
             localStorage.setItem('TONE_PRESET', selectedTone);
 
-            // Health check for Gemini
+            // Health check for Gemini (non-blocking)
             if (geminiKey) {
                 setMsg('Проверка ключа Gemini...');
-                const health = await checkGeminiHealth();
-                if (health.status !== 'ok') {
-                    throw new Error(`Ошибка валидации ключа Gemini: ${health.detail || health.status}`);
+                try {
+                    const health = await checkGeminiHealth();
+                    if (health.status !== 'ok') {
+                        console.warn('Gemini validation warning:', health.detail || health.status);
+                        // Don't throw - Gemini is optional
+                    }
+                } catch (err) {
+                    console.warn('Gemini health check failed (non-critical):', err);
                 }
             }
 
@@ -124,18 +125,44 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     {/* API Keys Tab */}
                     {activeTab === 'api' && (
                         <div className="space-y-5 animate-fade-in">
-                            {/* Gemini Key */}
+                            {/* Groq Key - PRIMARY PROVIDER */}
+                            <div className="border-2 border-purple-500/30 rounded-xl p-4 bg-purple-500/5">
+                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-2">
+                                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
+                                    Groq API Key ⚡ (Основной провайдер)
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type="password"
+                                        value={groqKey}
+                                        onChange={(e) => setGroqKey(e.target.value)}
+                                        placeholder="gsk_..."
+                                        className="w-full glass border border-purple-500/50 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all placeholder:text-gray-700"
+                                    />
+                                    {groqKey && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                            <Check className="w-4 h-4 text-green-400" />
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-purple-300 mt-2 flex items-center gap-1">
+                                    <AlertCircle className="w-3 h-3" />
+                                    Используется для транскрибации (Whisper Large v3) и исправления пунктуации (Llama 3.3 70B)
+                                </p>
+                            </div>
+
+                            {/* Gemini Key - OPTIONAL ENHANCEMENT */}
                             <div>
                                 <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                    Gemini API Key
+                                    <div className="w-2 h-2 rounded-full bg-blue-500/50"></div>
+                                    Gemini API Key (Опционально)
                                 </label>
                                 <div className="relative">
                                     <input
                                         type="password"
                                         value={geminiKey}
                                         onChange={(e) => setGeminiKey(e.target.value)}
-                                        placeholder="AIzaSy..."
+                                        placeholder="AIzaSy... (не обязательно)"
                                         className="w-full glass border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all placeholder:text-gray-700"
                                     />
                                     {geminiKey && (
@@ -146,59 +173,32 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                                 </div>
                                 <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
                                     <AlertCircle className="w-3 h-3" />
-                                    Требуется для основной транскрибации
+                                    Используется для улучшенной пунктуации, если квота Groq исчерпана
                                 </p>
                             </div>
 
-                            {/* Groq Key */}
-                            <div>
-                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-                                    Groq API Key
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type="password"
-                                        value={groqKey}
-                                        onChange={(e) => setGroqKey(e.target.value)}
-                                        placeholder="gsk_..."
-                                        className="w-full glass border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all placeholder:text-gray-700"
-                                    />
-                                    {groqKey && (
-                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                            <Check className="w-4 h-4 text-green-400" />
-                                        </div>
-                                    )}
+                            {/* Pipeline Status */}
+                            <div className="p-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/30 rounded-xl">
+                                <h3 className="text-sm font-semibold text-gray-200 mb-3 flex items-center gap-2">
+                                    🔄 Активный Pipeline
+                                </h3>
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-gray-400">1. Транскрибация</span>
+                                        <span className="text-purple-400 font-medium">Groq Whisper</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-gray-400">2. Орфография</span>
+                                        <span className="text-green-400 font-medium">Yandex.Speller</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-gray-400">3. Пунктуация</span>
+                                        <span className="text-purple-400 font-medium">Groq Llama 3.3</span>
+                                    </div>
                                 </div>
-                                <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
+                                <p className="text-[10px] text-gray-500 mt-3 flex items-center gap-1">
                                     <AlertCircle className="w-3 h-3" />
-                                    Требуется для быстрого резервного варианта и коррекции Llama 3
-                                </p>
-                            </div>
-
-                            {/* DeepSeek Key */}
-                            <div>
-                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-cyan-500"></div>
-                                    DeepSeek API Key (Fallback)
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type="password"
-                                        value={deepseekKey}
-                                        onChange={(e) => setDeepseekKey(e.target.value)}
-                                        placeholder="sk-..."
-                                        className="w-full glass border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all placeholder:text-gray-700"
-                                    />
-                                    {deepseekKey && (
-                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                            <Check className="w-4 h-4 text-green-400" />
-                                        </div>
-                                    )}
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3" />
-                                    Используется как последний вариант при падении Gemini и Groq
+                                    Gemini используется как fallback для пунктуации при необходимости
                                 </p>
                             </div>
 

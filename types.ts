@@ -14,7 +14,7 @@ export enum RecorderStatus {
 }
 
 export type TonePreset = 'default' | 'friendly' | 'serious' | 'professional';
-export type TranscriptionMode = 'general' | 'corrector';
+export type TranscriptionMode = 'general' | 'corrector' | 'coder' | 'translator';
 export type TranscriptionProvider = 'gemini' | 'groq';
 
 export interface ToneConfig {

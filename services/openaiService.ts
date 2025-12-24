@@ -41,6 +41,31 @@ if (!OPENAI_API_KEY) {
 }
 
 async function fetchJson(url: string, options: RequestInit) {
+  // STRATEGY 1: Use Electron IPC if available (bypasses CORS)
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.fetchApi) {
+    try {
+      const result = await (window as any).electronAPI.fetchApi(url, options);
+
+      if (!result.ok) {
+        const errorMsg = result.error || result.text || `HTTP ${result.status}`;
+        throw new Error(`API error: ${errorMsg}`);
+      }
+
+      // Try to parse as JSON
+      try {
+        const json = JSON.parse(result.text);
+        return json;
+      } catch (e) {
+        // Not JSON, return as text
+        return result.text;
+      }
+    } catch (err) {
+      console.warn('Electron IPC fetch failed, falling back to browser fetch:', err);
+      // Continue to browser fetch below
+    }
+  }
+
+  // STRATEGY 2: Fallback to browser fetch (for dev server / web mode)
   const res = await fetch(url, options);
   const text = await res.text();
   try {

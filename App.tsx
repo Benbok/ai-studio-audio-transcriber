@@ -1,5 +1,6 @@
+
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor, History } from 'lucide-react';
+import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor, History, Maximize2 } from 'lucide-react';
 import { RecorderStatus, TonePreset } from './types';
 import { transcribeAudio, TranscriptionMode, TranscriptionProvider, setGeminiApiKey } from './services/geminiService';
 import { setTranscriptionConfig } from './services/openaiService';
@@ -144,7 +145,7 @@ const App: React.FC = () => {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} `;
   };
 
   const copyToClipboard = useCallback(async (textToCopy: string) => {
@@ -370,171 +371,146 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-purple-900/20 text-white flex items-center justify-center ${isMiniMode ? 'p-2' : 'p-6'}`}>
-      <div className={`w-full ${isMiniMode ? 'max-w-sm h-[580px] flex flex-col' : 'max-w-4xl space-y-6'} animate-fade-in`}>
+    <div className={`h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-purple-950/30 text-white flex flex-col ${isMiniMode ? 'p-2' : 'p-4'}`}>
+      <div className={`w-full flex-1 ${isMiniMode ? 'flex flex-col' : 'max-w-6xl mx-auto flex flex-col'}`}>
 
         {isMiniMode ? (
-          /* ================= MINI MODE UI ================= */
-          <div className="flex-1 flex flex-col space-y-4">
-            {/* Mini Header */}
-            <div className="glass rounded-2xl p-3 flex items-center justify-between border border-gray-800/50">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
-                  <Mic className="w-4 h-4 text-white" />
-                </div>
-                <span className="font-bold text-sm">Scribe Mini</span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={toggleMiniMode}
-                  className="p-2 glass rounded-lg hover:border-blue-500/50 transition-all interactive"
-                  title="Выход из мини-режима"
-                >
-                  <Monitor className="w-4 h-4 text-blue-400" />
-                </button>
-                <button
-                  onClick={() => setIsHistoryOpen(true)}
-                  className="p-2 glass rounded-lg hover:border-purple-500/50 transition-all interactive"
-                  title="История записей"
-                >
-                  <History className="w-4 h-4 text-purple-400" />
-                </button>
-                <button
-                  onClick={() => setIsSettingsOpen(true)}
-                  className="p-2 glass rounded-lg hover:border-blue-500/50 transition-all interactive"
-                >
-                  <SettingsIcon className="w-4 h-4 text-gray-400" />
-                </button>
+          /* ================= MINI MODE (SINGLE ROW) ================= */
+          <div className="w-full h-full flex items-center gap-3 px-4 py-2">
+
+            {/* LEFT: Record Button + Timer */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <RecordButton
+                status={status}
+                onClick={status === RecorderStatus.RECORDING ? stopRecording : startRecording}
+                size="small"
+              />
+              <div className="w-12 text-center">
+                {status === RecorderStatus.RECORDING ? (
+                  <span className="text-xs font-mono text-red-400 font-bold">{formatTime(elapsedTime)}</span>
+                ) : processingStage !== 'idle' ? (
+                  <RotateCw className="w-4 h-4 text-blue-400 animate-spin mx-auto" />
+                ) : null}
               </div>
             </div>
 
-            {/* Record & Control Center */}
-            <div className="glass rounded-3xl p-6 flex flex-col items-center justify-center border border-blue-500/20 shadow-lg shadow-blue-500/5 relative overflow-hidden">
-              {/* Simple Visualizer Bar */}
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gray-800/50">
-                {status === RecorderStatus.RECORDING && <div className="h-full bg-blue-500 animate-pulse" style={{ width: '100%' }}></div>}
-              </div>
-
-              <div className="relative mb-4">
-                <RecordButton
-                  status={status}
-                  onClick={status === RecorderStatus.RECORDING ? stopRecording : startRecording}
-                  size="large"
-                />
-
-                {status === RecorderStatus.RECORDING && (
-                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 glass-strong px-2 py-0.5 rounded-full text-[10px] font-mono text-red-400 border border-red-500/30">
-                    {formatTime(elapsedTime)}
-                  </div>
-                )}
-              </div>
-
-              {/* Status Message */}
-              <div className="text-center h-4">
-                {status === RecorderStatus.RECORDING && <span className="text-[10px] text-red-400 animate-pulse font-medium uppercase tracking-tighter">Recording...</span>}
-                {processingStage === 'spelling' && <span className="text-[10px] text-blue-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Проверка орфографии...</span>}
-                {processingStage === 'grammar' && <span className="text-[10px] text-green-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Исправление грамматики...</span>}
-                {processingStage === 'punctuation' && <span className="text-[10px] text-purple-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Расстановка пунктуации...</span>}
-                {status === RecorderStatus.IDLE && processingStage === 'idle' && <span className="text-[10px] text-gray-500 uppercase tracking-widest">Ready</span>}
-              </div>
-            </div>
-
-            {/* Mini Result Area */}
-            <div className="flex-1 glass rounded-3xl p-4 border border-gray-800/50 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto mb-2 custom-scrollbar">
-                <TranscriptionResult
-                  text={text}
-                  status={status}
-                  copied={copied}
-                  onManualCopy={() => text && copyToClipboard(text)}
-                  compact={true}
-                />
-              </div>
-
-              {text && (
-                <div className="flex items-center justify-between pt-2 border-t border-gray-800/20 text-[10px] text-gray-500 font-mono">
-                  <span>{text.length} chars</span>
-                  <button
-                    onClick={() => copyToClipboard(text)}
-                    className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
-                    title="Копировать"
-                  >
-                    <Copy className="w-3 h-3" />
-                  </button>
+            {/* CENTER: Text Area */}
+            <div className="flex-1 min-w-0 h-full overflow-y-auto custom-scrollbar py-1">
+              {!text ? (
+                <div className="h-full flex items-center">
+                  <span className="text-gray-500 text-sm">
+                    {status === RecorderStatus.RECORDING
+                      ? 'Слушаю...'
+                      : processingStage !== 'idle'
+                        ? (processingStage === 'spelling' ? 'Орфография...' : processingStage === 'grammar' ? 'Грамматика...' : 'Пунктуация...')
+                        : 'Нажмите для записи'}
+                  </span>
                 </div>
+              ) : (
+                <p className="text-sm text-gray-100 break-words whitespace-pre-wrap leading-relaxed">{text}</p>
               )}
+            </div>
+
+            {/* RIGHT: Actions */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => text && copyToClipboard(text)}
+                disabled={!text}
+                className={`p-2 rounded-lg transition-all ${copied
+                  ? 'bg-green-500/20 text-green-400'
+                  : !text ? 'text-gray-700' : 'hover:bg-white/10 text-gray-400 hover:text-white'
+                  }`}
+                title="Копировать"
+              >
+                {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={toggleMiniMode}
+                className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-blue-400 transition-all"
+                title="Развернуть"
+              >
+                <Maximize2 className="w-5 h-5" />
+              </button>
             </div>
           </div>
         ) : (
           /* ================= NORMAL MODE UI ================= */
-          <>
-            {/* Header Card */}
-            <div className="glass rounded-3xl p-6 shadow-2xl border border-gray-800/50 relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-primary"></div>
-              <div className="flex items-center justify-between">
+          <div className="flex-1 flex flex-col gap-4 h-full">
+            {/* Header */}
+            <header className="glass rounded-2xl p-4 border border-white/10 relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 via-purple-600/10 to-pink-600/10"></div>
+              <div className="relative flex items-center justify-between">
                 <div>
-                  <h1 className="text-3xl font-bold gradient-text mb-1">Voice Scribe</h1>
-                  <p className="text-gray-400 text-sm">Профессиональная транскрибация RU/EN с автокопированием</p>
+                  <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+                    Voice Scribe
+                  </h1>
+                  <p className="text-gray-500 text-xs mt-0.5">Транскрибация RU/EN • Автокопирование</p>
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={toggleMiniMode}
-                    className="p-3 glass rounded-xl hover:border-blue-500/50 transition-all interactive"
+                    className="p-2.5 rounded-xl bg-white/5 hover:bg-blue-500/20 text-gray-400 hover:text-blue-400 transition-all border border-white/5 hover:border-blue-500/30"
                     title="Мини-режим"
                   >
-                    <Monitor className="w-5 h-5 text-gray-400" />
+                    <Monitor className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => setIsHistoryOpen(true)}
-                    className="p-3 glass rounded-xl hover:border-purple-500/50 transition-all interactive"
-                    title="История записей"
+                    className="p-2.5 rounded-xl bg-white/5 hover:bg-purple-500/20 text-gray-400 hover:text-purple-400 transition-all border border-white/5 hover:border-purple-500/30"
+                    title="История"
                   >
-                    <History className="w-5 h-5 text-purple-400" />
+                    <History className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => setIsSettingsOpen(true)}
-                    className="p-3 glass rounded-xl hover:border-blue-500/50 transition-all interactive"
+                    className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all border border-white/5"
+                    title="Настройки"
                   >
-                    <SettingsIcon className="w-5 h-5 text-gray-400" />
+                    <SettingsIcon className="w-4 h-4" />
                   </button>
                 </div>
               </div>
-            </div>
+            </header>
 
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left Column */}
-              <div className="lg:col-span-1 space-y-4">
-                <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50 h-32 relative overflow-hidden">
+            {/* Main Content */}
+            <div className="flex-1 flex gap-4 min-h-0">
+              {/* Left Panel */}
+              <div className="w-72 flex flex-col gap-3 flex-shrink-0">
+                {/* Visualizer */}
+                <div className="glass rounded-2xl p-4 border border-white/10 h-28 relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5"></div>
                   {status === RecorderStatus.RECORDING ? (
                     <Visualizer stream={stream} isRecording={true} />
                   ) : (
-                    <div className="flex items-center justify-center h-full opacity-30">
-                      <div className="flex gap-2 items-end">
-                        {[20, 35, 25, 40, 30, 45, 25, 35].map((h, i) => (
-                          <div key={i} className="w-2 bg-gray-600 rounded-full" style={{ height: `${h}px` }} />
+                    <div className="flex items-center justify-center h-full opacity-20">
+                      <div className="flex gap-1.5 items-end">
+                        {[16, 28, 20, 32, 24, 36, 20, 28].map((h, i) => (
+                          <div key={i} className="w-1.5 bg-gradient-to-t from-blue-500 to-purple-500 rounded-full" style={{ height: `${h}px` }} />
                         ))}
                       </div>
                     </div>
                   )}
                   {status === RecorderStatus.RECORDING && (
-                    <div className="absolute bottom-3 right-3 glass-strong px-3 py-1 rounded-full text-xs font-mono text-red-400 border border-red-500/30">
+                    <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-mono text-red-400 bg-red-500/10 border border-red-500/20">
                       ⏺ {formatTime(elapsedTime)}
                     </div>
                   )}
                 </div>
 
-                <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                  <label className="text-xs font-semibold text-gray-400 mb-3 block uppercase flex items-center justify-between">
-                    <span>Провайдер</span>
-                    {provider && <span className="text-[10px] px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full border border-green-500/30">● АКТИВЕН</span>}
+                {/* Provider Selector */}
+                <div className="glass rounded-2xl p-4 border border-white/10">
+                  <label className="text-[10px] font-bold text-gray-500 mb-2 block uppercase tracking-widest">
+                    Провайдер
                   </label>
                   <div className="flex gap-2">
                     {(['gemini', 'groq'] as TranscriptionProvider[]).map((p) => (
                       <button
                         key={p}
                         onClick={() => setProvider(p)}
-                        className={`relative flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${provider === p ? 'bg-gradient-primary text-white scale-105 border-2 border-blue-400' : 'bg-gray-800/50 text-gray-400'}`}
+                        className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all ${provider === p
+                          ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg shadow-purple-500/20'
+                          : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-white/5'
+                          }`}
                       >
                         {p === 'gemini' ? '✨ Gemini' : '⚡ Groq'}
                       </button>
@@ -543,100 +519,84 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Mode Selector */}
-                <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
-                  <label className="text-xs font-semibold text-gray-400 mb-2 block uppercase tracking-wider">
-                    Режим (Промпт)
+                <div className="glass rounded-2xl p-4 border border-white/10">
+                  <label className="text-[10px] font-bold text-gray-500 mb-2 block uppercase tracking-widest">
+                    Режим
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
                       <button
                         key={m}
                         onClick={() => setMode(m)}
-                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${mode === m
-                          ? 'bg-blue-600 text-white shadow-lg glow'
-                          : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                        className={`py-1.5 px-2 rounded-lg text-[11px] font-medium transition-all ${mode === m
+                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                          : 'bg-white/5 text-gray-500 hover:text-gray-300 hover:bg-white/10 border border-transparent'
                           }`}
                       >
-                        {m === 'general' ? 'Общий' : m === 'corrector' ? 'Корректор' : m === 'coder' ? 'Код' : 'Перевод'}
+                        {m === 'general' ? '📝 Общий' : m === 'corrector' ? '✏️ Корректор' : m === 'coder' ? '💻 Код' : '🌍 Перевод'}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex justify-center py-2">
-                  <div className="flex justify-center py-2">
-                    <RecordButton
-                      status={status}
-                      onClick={status === RecorderStatus.RECORDING ? stopRecording : startRecording}
-                      size="normal"
-                    />
+                {/* Record Button */}
+                <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                  <RecordButton
+                    status={status}
+                    onClick={status === RecorderStatus.RECORDING ? stopRecording : startRecording}
+                    size="large"
+                  />
+                  <div className="h-5 text-center">
+                    {status === RecorderStatus.RECORDING && <span className="text-red-400 text-xs animate-pulse">● Запись...</span>}
+                    {processingStage === 'spelling' && <span className="text-blue-400 text-xs animate-pulse">● Орфография...</span>}
+                    {processingStage === 'grammar' && <span className="text-green-400 text-xs animate-pulse">● Грамматика...</span>}
+                    {processingStage === 'punctuation' && <span className="text-purple-400 text-xs animate-pulse">● Пунктуация...</span>}
+                    {error && <span className="text-red-400 text-[10px]">{error}</span>}
                   </div>
-                </div>
-
-                <div className="text-center min-h-[1.5rem]">
-                  {status === RecorderStatus.RECORDING && <span className="text-red-400 text-sm animate-pulse">● Идет запись...</span>}
-                  {processingStage === 'spelling' && <span className="text-blue-400 text-sm animate-pulse">● Проверка орфографии...</span>}
-                  {processingStage === 'grammar' && <span className="text-green-400 text-sm animate-pulse">● Исправление грамматики...</span>}
-                  {processingStage === 'punctuation' && <span className="text-purple-400 text-sm animate-pulse">● Расстановка пунктуации...</span>}
-                  {error && <span className="text-red-400 text-xs">{error}</span>}
                 </div>
               </div>
 
-              {/* Right Column */}
-              <div className="lg:col-span-2">
-                <div className="glass rounded-2xl p-6 shadow-xl border border-gray-800/50 min-h-[400px] flex flex-col">
-                  <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    <TranscriptionResult text={text} status={status} copied={copied} onManualCopy={() => text && copyToClipboard(text)} />
-                  </div>
-                  {lastProvider && (
-                    <div className="mt-4 pt-4 border-t border-gray-800/50 text-center text-[10px] text-gray-500">
-                      Обработано: <span className="text-blue-400">{lastProvider}</span>
-                      {text && processingStage === 'idle' && <span className="ml-3 text-green-400">✓ Постобработка завершена</span>}
-                    </div>
-                  )}
+              {/* Right Panel - Result */}
+              <div className="flex-1 glass rounded-2xl p-5 border border-white/10 flex flex-col min-h-0">
+                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                  <TranscriptionResult text={text} status={status} copied={copied} onManualCopy={() => text && copyToClipboard(text)} />
                 </div>
+                {lastProvider && (
+                  <div className="mt-3 pt-3 border-t border-white/5 text-center text-[10px] text-gray-600">
+                    Провайдер: <span className="text-blue-400">{lastProvider}</span>
+                    {text && processingStage === 'idle' && <span className="ml-2 text-green-400">✓ Готово</span>}
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Footer */}
-            <div className="glass rounded-2xl p-4 shadow-xl border border-gray-800/50">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
+            <footer className="glass rounded-2xl p-3 border border-white/10">
+              <div className="flex items-center justify-between text-[10px]">
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500">Основной:</span>
-                    <span className="font-semibold text-gray-200">
-                      {hasGemini ? `Gemini (${geminiModel})` : 'Не настроен'}
-                    </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-600">Основной:</span>
+                    <span className="text-gray-400">{hasGemini ? `Gemini (${geminiModel})` : '—'}</span>
                     <HealthDot status={geminiHealth?.status} />
                   </div>
-
-                  <div className="h-4 w-px bg-gray-700"></div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500">Резервный:</span>
-                    <span className="font-semibold text-gray-200">
-                      {isGroq ? `Groq (${txModel})` : hasOpenAI ? `OpenAI (${openaiModel})` : 'Не настроен'}
-                    </span>
+                  <div className="h-3 w-px bg-white/10"></div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-600">Резервный:</span>
+                    <span className="text-gray-400">{isGroq ? `Groq (${txModel})` : hasOpenAI ? `OpenAI (${openaiModel})` : '—'}</span>
                     <HealthDot status={openaiHealth?.status} />
-                    {hasOpenAI && (
-                      <span className="text-gray-500">
-                        ({fallbackEnabled ? 'вкл' : 'выкл'})
-                      </span>
-                    )}
                   </div>
                 </div>
-
                 <button
                   onClick={refreshHealth}
                   disabled={refreshingHealth}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 hover:bg-gray-700/50 rounded-lg transition-all interactive text-gray-400 hover:text-gray-200"
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300 transition-all"
                 >
-                  <RotateCw className={`w-4 h-4 ${refreshingHealth ? 'animate-spin' : ''}`} />
-                  {refreshingHealth ? 'Обновление...' : 'Обновить статус'}
+                  <RotateCw className={`w-3 h-3 ${refreshingHealth ? 'animate-spin' : ''}`} />
+                  {refreshingHealth ? 'Обновление...' : 'Обновить'}
                 </button>
               </div>
-            </div>
-          </>
+            </footer>
+          </div>
         )}
       </div>
 
