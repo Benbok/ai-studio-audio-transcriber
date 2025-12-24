@@ -3,7 +3,7 @@ import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIc
 import { RecorderStatus, TonePreset } from './types';
 import { transcribeAudio, TranscriptionMode, TranscriptionProvider, setGeminiApiKey } from './services/geminiService';
 import { setTranscriptionConfig } from './services/openaiService';
-import { fixPunctuation, setPostProcessingApiKey } from './services/postProcessingService';
+import { processTextPipeline, setPostProcessingApiKey } from './services/postProcessingService';
 import { saveRecording } from './services/storageService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
@@ -13,7 +13,7 @@ import RecordingsList from './components/RecordingsList';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RecorderStatus>(RecorderStatus.IDLE);
-  const [isProcessingPunctuation, setIsProcessingPunctuation] = useState<boolean>(false);
+  const [processingStage, setProcessingStage] = useState<'idle' | 'spelling' | 'grammar' | 'punctuation'>('idle');
   const [isMiniMode, setIsMiniMode] = useState<boolean>(false);
 
   const toggleMiniMode = async () => {
@@ -288,30 +288,42 @@ const App: React.FC = () => {
       // Копируем сырой текст немедленно, чтобы пользователь мог работать
       await copyToClipboard(result.text);
 
-      // Фоновая обработка пунктуации (не блокирует UI)
-      setIsProcessingPunctuation(true);
+      // Фоновая обработка через новый pipeline (spelling → grammar → punctuation)
+      setProcessingStage('spelling');
 
-      fixPunctuation(result.text, mode, activeTone)
-        .then(async (punctuationResult) => {
-          if (punctuationResult.success && punctuationResult.text) {
-            // Обновляем текст с улучшенной пунктуацией
-            setText(punctuationResult.text);
-            await copyToClipboard(punctuationResult.text);
+      processTextPipeline(result.text, {
+        mode,
+        tone: activeTone,
+        enableSpelling: true,
+        enableGrammar: false, // Оставляем выключенным по умолчанию
+        enablePunctuation: true,
+        lang: ['ru', 'en']
+      })
+        .then(async (pipelineResult) => {
+          if (pipelineResult.success && pipelineResult.finalText) {
+            // Обновляем индикатор этапа по мере обработки
+            if (pipelineResult.stages.spelling) {
+              setProcessingStage('punctuation');
+            }
 
-            // Сохраняем финальную версию с пунктуацией
+            // Обновляем текст с улучшенной версией
+            setText(pipelineResult.finalText);
+            await copyToClipboard(pipelineResult.finalText);
+
+            // Сохраняем финальную версию
             try {
-              await saveRecording(audioBlob, punctuationResult.text, {
+              await saveRecording(audioBlob, pipelineResult.finalText, {
                 mode,
                 provider: result.provider,
                 tone: activeTone,
                 duration: elapsedTime,
               });
-              console.info('Recording saved to IndexedDB with punctuation');
+              console.info('Recording saved to IndexedDB with post-processing');
             } catch (saveErr) {
               console.error('Failed to save recording:', saveErr);
             }
           } else {
-            // Если пунктуация не удалась, сохраняем оригинал
+            // Если pipeline не удался, сохраняем оригинал
             try {
               await saveRecording(audioBlob, result.text, {
                 mode,
@@ -325,8 +337,8 @@ const App: React.FC = () => {
             }
           }
         })
-        .catch((punctErr) => {
-          console.warn('Punctuation processing failed:', punctErr);
+        .catch((pipelineErr) => {
+          console.warn('Pipeline processing failed:', pipelineErr);
           // Сохраняем оригинал при ошибке
           saveRecording(audioBlob, result.text, {
             mode,
@@ -336,15 +348,16 @@ const App: React.FC = () => {
           }).catch(saveErr => console.error('Failed to save recording:', saveErr));
         })
         .finally(() => {
-          setIsProcessingPunctuation(false);
+          setProcessingStage('idle');
         });
 
     } catch (err) {
       setError(err instanceof Error ? err.message : "Произошла неизвестная ошибка");
       setStatus(RecorderStatus.IDLE);
-      setIsProcessingPunctuation(false);
+      setProcessingStage('idle');
     }
   };
+
 
   const handleRetranscribe = (audioBlob: Blob, recordingId: number, toneOverride?: TonePreset) => {
     // Reset state and re-transcribe with current settings (or overridden tone)
@@ -419,8 +432,10 @@ const App: React.FC = () => {
               {/* Status Message */}
               <div className="text-center h-4">
                 {status === RecorderStatus.RECORDING && <span className="text-[10px] text-red-400 animate-pulse font-medium uppercase tracking-tighter">Recording...</span>}
-                {isProcessingPunctuation && <span className="text-[10px] text-blue-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Fixing Punctuation...</span>}
-                {status === RecorderStatus.IDLE && !isProcessingPunctuation && <span className="text-[10px] text-gray-500 uppercase tracking-widest">Ready</span>}
+                {processingStage === 'spelling' && <span className="text-[10px] text-blue-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Проверка орфографии...</span>}
+                {processingStage === 'grammar' && <span className="text-[10px] text-green-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Исправление грамматики...</span>}
+                {processingStage === 'punctuation' && <span className="text-[10px] text-purple-400 flex items-center gap-1"><RotateCw className="w-2 h-2 animate-spin" /> Расстановка пунктуации...</span>}
+                {status === RecorderStatus.IDLE && processingStage === 'idle' && <span className="text-[10px] text-gray-500 uppercase tracking-widest">Ready</span>}
               </div>
             </div>
 
@@ -560,7 +575,9 @@ const App: React.FC = () => {
 
                 <div className="text-center min-h-[1.5rem]">
                   {status === RecorderStatus.RECORDING && <span className="text-red-400 text-sm animate-pulse">● Идет запись...</span>}
-                  {isProcessingPunctuation && <span className="text-blue-400 text-sm animate-pulse">● Исправление пунктуации...</span>}
+                  {processingStage === 'spelling' && <span className="text-blue-400 text-sm animate-pulse">● Проверка орфографии...</span>}
+                  {processingStage === 'grammar' && <span className="text-green-400 text-sm animate-pulse">● Исправление грамматики...</span>}
+                  {processingStage === 'punctuation' && <span className="text-purple-400 text-sm animate-pulse">● Расстановка пунктуации...</span>}
                   {error && <span className="text-red-400 text-xs">{error}</span>}
                 </div>
               </div>
@@ -574,7 +591,7 @@ const App: React.FC = () => {
                   {lastProvider && (
                     <div className="mt-4 pt-4 border-t border-gray-800/50 text-center text-[10px] text-gray-500">
                       Обработано: <span className="text-blue-400">{lastProvider}</span>
-                      {text && !isProcessingPunctuation && <span className="ml-3 text-green-400">✓ Пунктуация исправлена</span>}
+                      {text && processingStage === 'idle' && <span className="ml-3 text-green-400">✓ Постобработка завершена</span>}
                     </div>
                   )}
                 </div>
