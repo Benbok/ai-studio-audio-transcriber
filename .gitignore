@@ -25,8 +25,42 @@ dist-ssr
 
 # Build artifacts
 release
+release-*/
 dist
 dist-ssr
 out
 build
+
+# Electron packaged binaries
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.pkg
+*.msi
+*.asar
+
+# Electron builder cache
+.webpack/
+electron-builder-cache/
+
+# Media / audio blobs
+*.mp3
+*.mp4
+*.webm
+*.ogg
+*.wav
+*.flac
+*.aac
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Local workflow/config artifacts
+.github/
+tasks/
 

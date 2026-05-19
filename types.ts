@@ -13,13 +13,38 @@ export enum RecorderStatus {
   COMPLETED = 'COMPLETED',
 }
 
-export type TonePreset = 'default' | 'friendly' | 'serious' | 'professional';
-export type TranscriptionMode = 'general' | 'corrector' | 'coder' | 'translator';
-export type TranscriptionProvider = 'gemini' | 'groq';
+export type TranscriptionMode = 'general' | 'corrector' | 'translator';
+export type TranscriptionProvider = 'gemini';
 
-export interface ToneConfig {
-  temperature: number;
-  promptSuffix: string;
+export type UpdaterStatus =
+  | 'idle'
+  | 'disabled'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error';
+
+export interface UpdaterState {
+  status: UpdaterStatus;
+  message: string;
+  progressPercent: number;
+  availableVersion: string | null;
+  currentVersion: string;
+}
+
+export interface ElectronAPI {
+  toggleMiniMode: (enabled: boolean) => Promise<void>;
+  setAlwaysOnTop?: (value: boolean) => Promise<void>;
+  fetchApi?: (url: string, options: Record<string, unknown>) => Promise<unknown>;
+  minimizeWindow?: () => Promise<void>;
+  closeWindow?: () => Promise<void>;
+  getUpdaterState?: () => Promise<UpdaterState>;
+  checkForUpdates?: () => Promise<UpdaterState>;
+  downloadUpdate?: () => Promise<UpdaterState>;
+  quitAndInstallUpdate?: () => Promise<UpdaterState>;
+  onUpdaterStateChange?: (callback: (state: UpdaterState) => void) => (() => void);
 }
 
 // Electron environment variables interface
@@ -28,8 +53,6 @@ declare global {
     electronEnv?: {
       [key: string]: string;
     };
-    electronAPI?: {
-      toggleMiniMode: (enabled: boolean) => Promise<void>;
-    };
+    electronAPI?: ElectronAPI;
   }
 }

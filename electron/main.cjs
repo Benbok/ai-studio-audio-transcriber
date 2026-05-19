@@ -1,9 +1,131 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
 
 // Keep a global reference of the window object
 let mainWindow = null;
+
+const NORMAL_WINDOW_BOUNDS = {
+  width: 1040,
+  height: 720,
+  minWidth: 900,
+  minHeight: 600,
+};
+
+const MINI_WINDOW_BOUNDS = {
+  width: 100,
+  height: 100,
+};
+
+const UPDATER_CHANNEL = 'updater:state';
+const DEFAULT_UPDATE_STATE = {
+  status: 'idle',
+  message: '',
+  progressPercent: 0,
+  availableVersion: null,
+  currentVersion: app.getVersion(),
+};
+
+let updateState = { ...DEFAULT_UPDATE_STATE };
+let updaterConfigured = false;
+
+function emitUpdaterState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(UPDATER_CHANNEL, { ...updateState });
+  }
+}
+
+function setUpdaterState(partialState) {
+  updateState = { ...updateState, ...partialState };
+  emitUpdaterState();
+}
+
+function configureAutoUpdater(envVars = {}) {
+  if (updaterConfigured) {
+    return;
+  }
+  updaterConfigured = true;
+
+  if (!app.isPackaged) {
+    setUpdaterState({
+      status: 'disabled',
+      message: 'Auto-update is disabled in development mode.',
+    });
+    return;
+  }
+
+  const githubOwner = envVars.GH_OWNER || process.env.GH_OWNER;
+  const githubRepo = envVars.GH_REPO || process.env.GH_REPO;
+  if (!githubOwner || !githubRepo) {
+    setUpdaterState({
+      status: 'disabled',
+      message: 'Set GH_OWNER and GH_REPO in .env.local to enable updates.',
+    });
+    return;
+  }
+
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: githubOwner,
+    repo: githubRepo,
+    private: false,
+  });
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdaterState({
+      status: 'checking',
+      message: 'Checking for updates...',
+      progressPercent: 0,
+    });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    setUpdaterState({
+      status: 'available',
+      message: `Update ${info.version} is available.`,
+      availableVersion: info.version,
+      progressPercent: 0,
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    setUpdaterState({
+      status: 'not-available',
+      message: 'You already have the latest version.',
+      availableVersion: null,
+      progressPercent: 0,
+    });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    setUpdaterState({
+      status: 'downloading',
+      message: `Downloading update: ${Math.round(progress.percent)}%`,
+      progressPercent: progress.percent,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdaterState({
+      status: 'downloaded',
+      message: `Update ${info.version} downloaded. Restart to install.`,
+      availableVersion: info.version,
+      progressPercent: 100,
+    });
+  });
+
+  autoUpdater.on('error', (error) => {
+    setUpdaterState({
+      status: 'error',
+      message: error?.message || 'Failed to check or download updates.',
+      progressPercent: 0,
+    });
+  });
+}
 
 /**
  * Loads .env.local from the executable's directory (production) or project root (dev)
@@ -51,10 +173,13 @@ function createWindow() {
 
   // Create the browser window
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 768,
+    width: NORMAL_WINDOW_BOUNDS.width,
+    height: NORMAL_WINDOW_BOUNDS.height,
+    minWidth: NORMAL_WINDOW_BOUNDS.minWidth,
+    minHeight: NORMAL_WINDOW_BOUNDS.minHeight,
+    frame: false, // Frameless for a clean, custom look
+    transparent: true, // Support rounded corners and transparency via CSS
+    roundedCorners: true,
     center: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -62,17 +187,17 @@ function createWindow() {
       contextIsolation: true,
       sandbox: false,
     },
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'), // Optional: add icon later
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     autoHideMenuBar: true,
-    titleBarStyle: 'default',
-    backgroundColor: '#0a0a0f',
-    show: false, // Don't show until ready
+    backgroundColor: '#00000000', // Initialize with transparent color
+    show: false,
   });
 
   // Store env vars for preload script access
   // The preload script will read them via IPC
   mainWindow.webContents.on('dom-ready', () => {
     mainWindow.webContents.send('env-vars', envVars);
+    emitUpdaterState();
   });
 
   // Load the app
@@ -80,8 +205,10 @@ function createWindow() {
   if (isDev) {
     // Development: load from Vite dev server
     mainWindow.loadURL('http://localhost:3000');
-    // Open DevTools in development
-    mainWindow.webContents.openDevTools();
+    // DevTools are opt-in to avoid noisy protocol logs in terminal.
+    if ((process.env.ELECTRON_OPEN_DEVTOOLS || '') === '1') {
+      mainWindow.webContents.openDevTools();
+    }
   } else {
     // Production: load from dist folder
     // Use app.getAppPath() which works correctly in both asar and unpacked scenarios
@@ -103,6 +230,8 @@ function createWindow() {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  const envVars = loadEnvLocal();
+  configureAutoUpdater(envVars);
   createWindow();
 
   app.on('activate', () => {
@@ -176,31 +305,21 @@ ipcMain.handle('toggle-mini-mode', async (event, isMini) => {
   if (!mainWindow) return;
 
   console.log('[MINI-MODE] Toggle called, isMini:', isMini);
-  console.log('[MINI-MODE] Current size:', mainWindow.getSize());
-  console.log('[MINI-MODE] isMaximized:', mainWindow.isMaximized());
-  console.log('[MINI-MODE] isFullScreen:', mainWindow.isFullScreen());
 
   if (isMini) {
-    // Switch to Mini Mode
-    if (mainWindow.isMaximized()) {
-      console.log('[MINI-MODE] Unmaximizing...');
-      mainWindow.unmaximize();
-    }
-    if (mainWindow.isFullScreen()) {
-      console.log('[MINI-MODE] Exiting fullscreen...');
-      mainWindow.setFullScreen(false);
-    }
+    // Switch to Mini Mode (Square icon-style window)
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    if (mainWindow.isFullScreen()) mainWindow.setFullScreen(false);
 
-    // Wait for unmaximize to complete
     await new Promise(resolve => setTimeout(resolve, 100));
 
     // Get current bounds for animation
     const currentBounds = mainWindow.getBounds();
-    const targetBounds = { width: 800, height: 120 };
+    const targetBounds = {
+      width: MINI_WINDOW_BOUNDS.width,
+      height: MINI_WINDOW_BOUNDS.height,
+    }; // Ultra-minimalist square
 
-    console.log('[MINI-MODE] Animating from', currentBounds, 'to', targetBounds);
-
-    // IMPORTANT: Reset resizing constraints to allow shrinking
     mainWindow.setResizable(true);
     mainWindow.setMinimumSize(1, 1);
     mainWindow.setMaximumSize(10000, 10000);
@@ -210,31 +329,24 @@ ipcMain.handle('toggle-mini-mode', async (event, isMini) => {
       mainWindow,
       { width: currentBounds.width, height: currentBounds.height },
       targetBounds,
-      350 // 350ms animation
+      350
     );
 
-    console.log('[MINI-MODE] Size after animation:', mainWindow.getSize());
-
     // Lock dimensions
-    mainWindow.setMinimumSize(800, 120);
-    mainWindow.setMaximumSize(800, 120);
-
+    mainWindow.setMinimumSize(MINI_WINDOW_BOUNDS.width, MINI_WINDOW_BOUNDS.height);
+    mainWindow.setMaximumSize(MINI_WINDOW_BOUNDS.width, MINI_WINDOW_BOUNDS.height);
     mainWindow.setAlwaysOnTop(true);
     mainWindow.setResizable(false);
 
-    console.log('[MINI-MODE] Mini mode applied successfully');
-
   } else {
     // Switch back to Normal Mode
-    console.log('[MINI-MODE] Switching to normal mode...');
-
-    // Get current bounds for animation
     const currentBounds = mainWindow.getBounds();
-    const targetBounds = { width: 1280, height: 900 };
+    const targetBounds = {
+      width: NORMAL_WINDOW_BOUNDS.width,
+      height: NORMAL_WINDOW_BOUNDS.height,
+    };
 
     mainWindow.setResizable(true);
-
-    // Reset constraints before animation
     mainWindow.setMinimumSize(1, 1);
     mainWindow.setMaximumSize(10000, 10000);
 
@@ -243,22 +355,74 @@ ipcMain.handle('toggle-mini-mode', async (event, isMini) => {
       mainWindow,
       { width: currentBounds.width, height: currentBounds.height },
       targetBounds,
-      350 // 350ms animation
+      350
     );
 
-    mainWindow.setMinimumSize(1024, 768);
-
+    mainWindow.setMinimumSize(NORMAL_WINDOW_BOUNDS.minWidth, NORMAL_WINDOW_BOUNDS.minHeight);
     mainWindow.setAlwaysOnTop(false);
     mainWindow.center();
-
-    console.log('[MINI-MODE] Normal mode applied, size:', mainWindow.getSize());
   }
+});
+
+// Window Control Handlers
+ipcMain.handle('minimize-window', () => {
+  if (mainWindow) mainWindow.minimize();
+});
+
+ipcMain.handle('close-window', () => {
+  if (mainWindow) mainWindow.close();
 });
 
 ipcMain.handle('set-always-on-top', (event, value) => {
   if (mainWindow) {
     mainWindow.setAlwaysOnTop(value);
   }
+});
+
+// Auto-updater IPC API
+ipcMain.handle('updater:get-state', () => {
+  return { ...updateState };
+});
+
+ipcMain.handle('updater:check-for-updates', async () => {
+  if (!app.isPackaged) {
+    return { ...updateState };
+  }
+
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    setUpdaterState({
+      status: 'error',
+      message: error?.message || 'Unable to check for updates.',
+    });
+  }
+
+  return { ...updateState };
+});
+
+ipcMain.handle('updater:download-update', async () => {
+  if (!app.isPackaged) {
+    return { ...updateState };
+  }
+
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (error) {
+    setUpdaterState({
+      status: 'error',
+      message: error?.message || 'Unable to download update.',
+    });
+  }
+
+  return { ...updateState };
+});
+
+ipcMain.handle('updater:quit-and-install', () => {
+  if (app.isPackaged) {
+    autoUpdater.quitAndInstall();
+  }
+  return { ...updateState };
 });
 
 /**

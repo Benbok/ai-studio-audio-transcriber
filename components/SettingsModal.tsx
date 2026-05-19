@@ -1,37 +1,60 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, AlertCircle, Loader2, Key, Palette, Keyboard, Volume2 } from 'lucide-react';
+import { X, Check, AlertCircle, Loader2, Key, Palette, Keyboard, Zap, Download, RefreshCw } from 'lucide-react';
 import { setGeminiApiKey, checkGeminiHealth } from '../services/geminiService';
-import { setTranscriptionConfig } from '../services/openaiService';
-import { TonePreset } from '../types';
+import { DEFAULT_QUOTA_CONFIG, getQuotaConfig, setQuotaConfig, getQuotaPercentage, getQuotaWarning, subscribeToQuotaUpdates } from '../services/quotaService';
+import type { UpdaterState } from '../types';
 
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
+    updaterState: UpdaterState;
+    isCheckingUpdates: boolean;
+    isInstallingUpdate: boolean;
+    onCheckUpdates: () => Promise<void>;
+    onDownloadUpdate: () => Promise<void>;
+    onInstallUpdate: () => Promise<void>;
 }
 
-type TabType = 'api' | 'tone' | 'appearance' | 'shortcuts';
+type TabType = 'api' | 'appearance' | 'shortcuts';
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({
+    isOpen,
+    onClose,
+    updaterState,
+    isCheckingUpdates,
+    isInstallingUpdate,
+    onCheckUpdates,
+    onDownloadUpdate,
+    onInstallUpdate,
+}) => {
     const [activeTab, setActiveTab] = useState<TabType>('api');
-    const [groqKey, setGroqKey] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
-    const [selectedTone, setSelectedTone] = useState<TonePreset>('default');
     const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [msg, setMsg] = useState('');
+    const [quotaConfig, setQuotaState] = useState(() => getQuotaConfig() || DEFAULT_QUOTA_CONFIG);
+    const [dailyLimit, setDailyLimit] = useState(quotaConfig?.dailyLimit?.toString() || '1500');
 
     // Load from localStorage on open
     useEffect(() => {
         if (isOpen) {
-            const grKey = localStorage.getItem('VITE_GROQ_API_KEY') || '';
             const gKey = localStorage.getItem('VITE_GEMINI_API_KEY') || '';
-            const tone = (localStorage.getItem('TONE_PRESET') || 'default') as TonePreset;
-            setGroqKey(grKey);
+            const quota = getQuotaConfig();
+
             setGeminiKey(gKey);
-            setSelectedTone(tone);
+            if (quota) {
+                setQuotaState(quota);
+                setDailyLimit(quota.dailyLimit.toString());
+            }
             setStatus('idle');
             setMsg('');
         }
     }, [isOpen]);
+
+    useEffect(() => {
+        return subscribeToQuotaUpdates((updated) => {
+            setQuotaState(updated);
+        });
+    }, []);
 
     const handleSave = async () => {
         setStatus('saving');
@@ -39,22 +62,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
         try {
             // Update Services
-            if (groqKey) setTranscriptionConfig(groqKey);
             if (geminiKey) setGeminiApiKey(geminiKey);
 
             // Persist
-            if (groqKey) localStorage.setItem('VITE_GROQ_API_KEY', groqKey);
             if (geminiKey) localStorage.setItem('VITE_GEMINI_API_KEY', geminiKey);
-            localStorage.setItem('TONE_PRESET', selectedTone);
+            
+            // Save quota config
+            const limit = parseInt(dailyLimit) || 1500;
+            const updatedQuota = setQuotaConfig({ dailyLimit: limit });
+            setQuotaState(updatedQuota);
+            setDailyLimit(updatedQuota.dailyLimit.toString());
 
-            // Health check for Gemini (non-blocking)
+            // Health check for Gemini
             if (geminiKey) {
                 setMsg('Проверка ключа Gemini...');
                 try {
                     const health = await checkGeminiHealth();
                     if (health.status !== 'ok') {
                         console.warn('Gemini validation warning:', health.detail || health.status);
-                        // Don't throw - Gemini is optional
                     }
                 } catch (err) {
                     console.warn('Gemini health check failed (non-critical):', err);
@@ -81,7 +106,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 {/* Close Button */}
                 <button
                     onClick={onClose}
-                    className="absolute top-6 right-6 p-2 text-gray-500 hover:text-white transition-all rounded-lg hover:bg-gray-800/50 interactive"
+                    type="button"
+                    aria-label="Закрыть настройки"
+                    className="absolute top-6 right-6 z-20 no-drag p-2 text-gray-500 hover:text-white transition-all rounded-lg hover:bg-gray-800/50 interactive"
                 >
                     <X className="w-5 h-5" />
                 </button>
@@ -98,7 +125,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 <div className="flex border-b border-gray-800/50 px-6">
                     {[
                         { id: 'api' as TabType, label: 'API Ключи', icon: Key },
-                        { id: 'tone' as TabType, label: 'Тон голоса', icon: Volume2 },
                         { id: 'appearance' as TabType, label: 'Внешний вид', icon: Palette },
                         { id: 'shortcuts' as TabType, label: 'Горячие клавиши', icon: Keyboard },
                     ].map((tab) => (
@@ -125,45 +151,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     {/* API Keys Tab */}
                     {activeTab === 'api' && (
                         <div className="space-y-5 animate-fade-in">
-                            {/* Groq Key - PRIMARY PROVIDER */}
-                            <div className="border-2 border-purple-500/30 rounded-xl p-4 bg-purple-500/5">
+                            {/* Gemini Key - PRIMARY PROVIDER */}
+                            <div className="border-2 border-blue-500/30 rounded-xl p-4 bg-blue-500/5">
                                 <label className="flex items-center gap-2 text-sm font-semibold text-gray-200 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
-                                    Groq API Key ⚡ (Основной провайдер)
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type="password"
-                                        value={groqKey}
-                                        onChange={(e) => setGroqKey(e.target.value)}
-                                        placeholder="gsk_..."
-                                        className="w-full glass border border-purple-500/50 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all placeholder:text-gray-700"
-                                    />
-                                    {groqKey && (
-                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                            <Check className="w-4 h-4 text-green-400" />
-                                        </div>
-                                    )}
-                                </div>
-                                <p className="text-xs text-purple-300 mt-2 flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3" />
-                                    Используется для транскрибации (Whisper Large v3) и исправления пунктуации (Llama 3.3 70B)
-                                </p>
-                            </div>
-
-                            {/* Gemini Key - OPTIONAL ENHANCEMENT */}
-                            <div>
-                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-2">
-                                    <div className="w-2 h-2 rounded-full bg-blue-500/50"></div>
-                                    Gemini API Key (Опционально)
+                                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                                    Gemini API Key ✨ (Основной провайдер)
                                 </label>
                                 <div className="relative">
                                     <input
                                         type="password"
                                         value={geminiKey}
                                         onChange={(e) => setGeminiKey(e.target.value)}
-                                        placeholder="AIzaSy... (не обязательно)"
-                                        className="w-full glass border border-gray-800 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all placeholder:text-gray-700"
+                                        placeholder="AIzaSy..."
+                                        className="w-full glass border border-blue-500/50 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all placeholder:text-gray-700"
                                     />
                                     {geminiKey && (
                                         <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -171,35 +171,93 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                                         </div>
                                     )}
                                 </div>
-                                <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
+                                <p className="text-xs text-blue-300 mt-2 flex items-center gap-1">
                                     <AlertCircle className="w-3 h-3" />
-                                    Используется для улучшенной пунктуации, если квота Groq исчерпана
+                                    Транскрибация + исправление пунктуации/орфографии в одном LLM вызове
                                 </p>
                             </div>
 
-                            {/* Pipeline Status */}
-                            <div className="p-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/30 rounded-xl">
-                                <h3 className="text-sm font-semibold text-gray-200 mb-3 flex items-center gap-2">
-                                    🔄 Активный Pipeline
-                                </h3>
-                                <div className="space-y-2">
-                                    <div className="flex items-center justify-between text-xs">
-                                        <span className="text-gray-400">1. Транскрибация</span>
-                                        <span className="text-purple-400 font-medium">Groq Whisper</span>
+                            {/* Gemini Quota Settings */}
+                            <div className="border-2 border-blue-500/30 rounded-xl p-4 bg-blue-500/5">
+                                <div className="flex items-center justify-between mb-4">
+                                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+                                        <Zap className="w-4 h-4 text-blue-400" />
+                                        Gemini 2.5 Flash - Лимиты квоты
+                                    </label>
+                                </div>
+
+                                {/* Quota Display */}
+                                <div className="space-y-3 mb-4">
+                                    <div className="bg-gray-900/50 rounded-lg p-3">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-xs text-gray-400">Использовано сегодня</span>
+                                            <span className="text-sm font-semibold text-blue-400">
+                                                {quotaConfig?.usedToday || 0} / {quotaConfig?.dailyLimit || 1500} токенов
+                                            </span>
+                                        </div>
+                                        <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+                                            <div
+                                                className={`h-full transition-all duration-300 ${
+                                                    ((quotaConfig?.usedToday || 0) / (quotaConfig?.dailyLimit || 1500)) > 0.9
+                                                        ? 'bg-red-500'
+                                                        : (quotaConfig?.usedToday || 0) / (quotaConfig?.dailyLimit || 1500) > 0.75
+                                                            ? 'bg-yellow-500'
+                                                            : 'bg-blue-500'
+                                                }`}
+                                                style={{
+                                                    width: `${Math.min(100, ((quotaConfig?.usedToday || 0) / (quotaConfig?.dailyLimit || 1500)) * 100)}%`
+                                                }}
+                                            />
+                                        </div>
+                                        <div className="flex justify-between mt-2 text-xs text-gray-500">
+                                            <span>Осталось: {Math.max(0, (quotaConfig?.dailyLimit || 1500) - (quotaConfig?.usedToday || 0))} токенов</span>
+                                            <span>{Math.round(getQuotaPercentage(quotaConfig))}%</span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center justify-between text-xs">
-                                        <span className="text-gray-400">2. Орфография</span>
-                                        <span className="text-green-400 font-medium">Yandex.Speller</span>
-                                    </div>
-                                    <div className="flex items-center justify-between text-xs">
-                                        <span className="text-gray-400">3. Пунктуация</span>
-                                        <span className="text-purple-400 font-medium">Groq Llama 3.3</span>
+
+                                    {/* Breakdown */}
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                        <div className="bg-gray-900/30 p-2 rounded">
+                                            <div className="text-gray-500">Input токены</div>
+                                            <div className="font-semibold text-blue-300">{quotaConfig?.categories?.input || 0}</div>
+                                        </div>
+                                        <div className="bg-gray-900/30 p-2 rounded">
+                                            <div className="text-gray-500">Output токены</div>
+                                            <div className="font-semibold text-green-300">{quotaConfig?.categories?.output || 0}</div>
+                                        </div>
                                     </div>
                                 </div>
-                                <p className="text-[10px] text-gray-500 mt-3 flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3" />
-                                    Gemini используется как fallback для пунктуации при необходимости
-                                </p>
+
+                                {/* Daily Limit Editor */}
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-400 mb-2">
+                                        Установить дневной лимит токенов
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="number"
+                                            value={dailyLimit}
+                                            onChange={(e) => setDailyLimit(e.target.value)}
+                                            placeholder="1500"
+                                            min="100"
+                                            max="10000"
+                                            className="flex-1 glass border border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-400 outline-none transition-all"
+                                        />
+                                        <span className="text-xs text-gray-500 flex items-center px-2 py-2 bg-gray-900/50 rounded-lg">
+                                            токен/день
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Warning if needed */}
+                                {quotaConfig && getQuotaWarning(quotaConfig) && (
+                                    <div className="mt-3 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                                        <p className="text-xs text-yellow-400 flex items-center gap-1.5">
+                                            <AlertCircle className="w-3 h-3" />
+                                            {getQuotaWarning(quotaConfig)}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Status Message */}
@@ -216,50 +274,65 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                                     <span className="font-medium">{msg}</span>
                                 </div>
                             )}
-                        </div>
-                    )}
 
-                    {/* Tone Tab */}
-                    {activeTab === 'tone' && (
-                        <div className="space-y-5 animate-fade-in">
-                            <div>
-                                <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3">
-                                    <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-                                    Тон транскрибации
-                                </label>
-                                <p className="text-xs text-gray-500 mb-4">
-                                    Выберите стиль обработки текста. Это влияет на формальность и тональность результата.
-                                </p>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {([
-                                        { value: 'default', label: 'По умолчанию', desc: 'Нейтральный стиль' },
-                                        { value: 'friendly', label: 'Дружелюбный', desc: 'Теплый и разговорный' },
-                                        { value: 'serious', label: 'Серьезный', desc: 'Формальный и строгий' },
-                                        { value: 'professional', label: 'Профессиональный', desc: 'Деловой стиль' },
-                                    ] as { value: TonePreset; label: string; desc: string }[]).map((tone) => (
-                                        <button
-                                            key={tone.value}
-                                            onClick={() => setSelectedTone(tone.value)}
-                                            className={`p-4 rounded-xl text-left transition-all border-2 ${selectedTone === tone.value
-                                                ? 'bg-purple-500/20 border-purple-500 shadow-lg shadow-purple-500/20'
-                                                : 'glass border-gray-800 hover:border-purple-500/50'
-                                                }`}
-                                        >
-                                            <div className="flex items-center justify-between mb-1">
-                                                <span className="font-semibold text-sm text-gray-200">{tone.label}</span>
-                                                {selectedTone === tone.value && <Check className="w-4 h-4 text-purple-400" />}
-                                            </div>
-                                            <p className="text-xs text-gray-500">{tone.desc}</p>
-                                        </button>
-                                    ))}
+                            <div className="border border-white/10 rounded-xl p-4 bg-white/5">
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-200">Обновления приложения</p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Статус: <span className="text-gray-300">{updaterState.status}</span>
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={() => void onCheckUpdates()}
+                                        disabled={isCheckingUpdates}
+                                        className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 text-xs text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <span className="inline-flex items-center gap-1.5">
+                                            {isCheckingUpdates ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                                            Проверить
+                                        </span>
+                                    </button>
                                 </div>
-                            </div>
 
-                            <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
-                                <p className="text-xs text-blue-400 flex items-center gap-2">
-                                    <AlertCircle className="w-4 h-4" />
-                                    Настройка тона применяется ко всем новым транскрибациям и повторным обработкам
-                                </p>
+                                <p className="text-xs text-gray-400 min-h-4">{updaterState.message || 'Нет новых сообщений.'}</p>
+
+                                {updaterState.status === 'downloading' && (
+                                    <div className="mt-3">
+                                        <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full bg-blue-500 transition-all duration-300"
+                                                style={{ width: `${Math.max(0, Math.min(100, updaterState.progressPercent))}%` }}
+                                            />
+                                        </div>
+                                        <p className="text-[11px] text-blue-300 mt-1">{Math.round(updaterState.progressPercent)}%</p>
+                                    </div>
+                                )}
+
+                                {updaterState.status === 'available' && (
+                                    <button
+                                        onClick={() => void onDownloadUpdate()}
+                                        className="mt-3 px-3 py-2 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-xs text-white"
+                                    >
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Download className="w-3 h-3" />
+                                            Скачать обновление
+                                        </span>
+                                    </button>
+                                )}
+
+                                {updaterState.status === 'downloaded' && (
+                                    <button
+                                        onClick={() => void onInstallUpdate()}
+                                        disabled={isInstallingUpdate}
+                                        className="mt-3 px-3 py-2 rounded-lg bg-green-600/80 hover:bg-green-600 text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <span className="inline-flex items-center gap-1.5">
+                                            {isInstallingUpdate ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                            Перезапустить и установить
+                                        </span>
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -320,7 +393,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={status === 'saving' || (activeTab !== 'api' && activeTab !== 'tone')}
+                        disabled={status === 'saving'}
                         className="flex-1 py-3 bg-gradient-primary text-white font-medium rounded-xl shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40 transition-all interactive disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {status === 'saving' ? (

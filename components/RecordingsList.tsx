@@ -1,21 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Pause, Trash2, RotateCw, Copy, X } from 'lucide-react';
 import { RecordingMetadata, getAllRecordings, deleteRecording, getRecordingAudio, clearAllRecordings } from '../services/storageService';
-import { TonePreset } from '../types';
 import ConfirmDialog from './ConfirmDialog';
 
 interface RecordingsListProps {
     isOpen: boolean;
     onClose: () => void;
-    onRetranscribe: (audioBlob: Blob, recordingId: number, toneOverride?: TonePreset) => void;
+    onRetranscribe: (audioBlob: Blob, recordingId: number) => void;
 }
 
 const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetranscribe }) => {
     const [recordings, setRecordings] = useState<RecordingMetadata[]>([]);
     const [playingId, setPlayingId] = useState<number | null>(null);
     const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
-    const [retranscribeTarget, setRetranscribeTarget] = useState<RecordingMetadata | null>(null);
-
     // Confirmation Dialog State
     const [confirmTarget, setConfirmTarget] = useState<{ id: number | 'all'; type: 'delete' | 'clear' } | null>(null);
 
@@ -97,17 +94,11 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
         }
     };
 
-    const initiateRetranscribe = (recording: RecordingMetadata) => {
-        setRetranscribeTarget(recording);
-    };
-
-    const confirmRetranscribe = async (tone: TonePreset) => {
-        if (!retranscribeTarget || !retranscribeTarget.id) return;
-
-        const blob = await getRecordingAudio(retranscribeTarget.id);
+    const handleRetranscribe = async (recording: RecordingMetadata) => {
+        if (!recording.id) return;
+        const blob = await getRecordingAudio(recording.id);
         if (blob) {
-            onRetranscribe(blob, retranscribeTarget.id, tone);
-            setRetranscribeTarget(null);
+            onRetranscribe(blob, recording.id);
             onClose();
         }
     };
@@ -193,11 +184,6 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
                                                     <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
                                                         {recording.provider}
                                                     </span>
-                                                    {recording.tone && recording.tone !== 'default' && (
-                                                        <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
-                                                            {recording.tone}
-                                                        </span>
-                                                    )}
                                                 </div>
                                                 <p className="text-sm text-gray-300 line-clamp-2">
                                                     {recording.text}
@@ -208,7 +194,7 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
                                         {/* Actions */}
                                         <div className="flex items-center gap-2 mt-3">
                                             <button
-                                                onClick={() => initiateRetranscribe(recording)}
+                                                onClick={() => handleRetranscribe(recording)}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs glass rounded-lg hover:border-purple-500/50 hover:text-purple-400 transition-all interactive"
                                             >
                                                 <RotateCw className="w-3.5 h-3.5" />
@@ -253,47 +239,6 @@ const RecordingsList: React.FC<RecordingsListProps> = ({ isOpen, onClose, onRetr
                 </div>
             </div>
 
-            {/* Retranscribe Tone Selection Modal */}
-            {retranscribeTarget && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur animate-fade-in">
-                    <div className="glass-strong border border-gray-800/50 rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-scale-in">
-                        <h3 className="text-xl font-bold text-white mb-2">Выберите тон</h3>
-                        <p className="text-gray-400 text-sm mb-6">С каким настроением переписать эту запись?</p>
-
-                        <div className="space-y-3">
-                            {([
-                                { value: 'default', label: 'По умолчанию', desc: 'Нейтральный' },
-                                { value: 'friendly', label: 'Дружелюбный', desc: 'Теплый' },
-                                { value: 'serious', label: 'Серьезный', desc: 'Строгий' },
-                                { value: 'professional', label: 'Профессиональный', desc: 'Деловой' },
-                            ] as { value: TonePreset; label: string; desc: string }[]).map((t) => (
-                                <button
-                                    key={t.value}
-                                    onClick={() => confirmRetranscribe(t.value)}
-                                    className="w-full flex items-center justify-between p-3 rounded-xl glass border border-gray-700/50 hover:bg-white/5 hover:border-purple-500/50 transition-all group"
-                                >
-                                    <div className="text-left">
-                                        <div className="font-medium text-gray-200 group-hover:text-purple-300 transition-colors">
-                                            {t.label}
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                            {t.desc}
-                                        </div>
-                                    </div>
-                                    <RotateCw className="w-4 h-4 text-gray-600 group-hover:text-purple-400 transition-colors opacity-0 group-hover:opacity-100" />
-                                </button>
-                            ))}
-                        </div>
-
-                        <button
-                            onClick={() => setRetranscribeTarget(null)}
-                            className="w-full mt-6 py-3 text-sm text-gray-500 hover:text-white transition-colors"
-                        >
-                            Отмена
-                        </button>
-                    </div>
-                </div>
-            )}
             {/* Confirmation Dialog */}
             <ConfirmDialog
                 isOpen={!!confirmTarget}

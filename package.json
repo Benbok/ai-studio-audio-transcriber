@@ -8,23 +8,30 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:dev": "concurrently --success first -k \"vite\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "release:github": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --publish always",
     "dist": "npm run electron:build"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
+    "electron-updater": "^6.8.3",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.5.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
+    "postcss": "^8.5.14",
+    "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "wait-on": "^9.0.3"
@@ -44,7 +51,7 @@
     "win": {
       "target": [
         {
-          "target": "dir",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
@@ -52,6 +59,19 @@
       ],
       "verifyUpdateCodeSignature": false,
       "forceCodeSigning": false
-    }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "your-github-owner",
+        "repo": "your-github-repo",
+        "releaseType": "release"
+      }
+    ]
   }
 }

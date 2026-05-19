@@ -19,6 +19,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleMiniMode: (isMini) => ipcRenderer.invoke('toggle-mini-mode', isMini),
   setAlwaysOnTop: (value) => ipcRenderer.invoke('set-always-on-top', value),
   fetchApi: (url, options) => ipcRenderer.invoke('fetch-api', { url, options }),
+  minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
+  closeWindow: () => ipcRenderer.invoke('close-window'),
+  getUpdaterState: () => ipcRenderer.invoke('updater:get-state'),
+  checkForUpdates: () => ipcRenderer.invoke('updater:check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('updater:download-update'),
+  quitAndInstallUpdate: () => ipcRenderer.invoke('updater:quit-and-install'),
+  onUpdaterStateChange: (callback) => {
+    const handler = (_, state) => callback(state);
+    ipcRenderer.on('updater:state', handler);
+    return () => ipcRenderer.removeListener('updater:state', handler);
+  },
 });
 
 

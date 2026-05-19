@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import openaiService from './openaiService'; // Static import for fallback chain
-import { checkSpelling, SpellingResult } from './yandexSpellerService';
+import { updateQuotaUsage } from './quotaService';
 import type { TranscriptionMode, TonePreset } from '../types';
 
 // Типы постобработки
@@ -24,10 +24,11 @@ export interface ProcessingResult {
 export interface PipelineOptions {
     mode: TranscriptionMode;
     tone: TonePreset;
-    enableSpelling?: boolean;    // default: true
-    enableGrammar?: boolean;     // default: false (пока отключено)
-    enablePunctuation?: boolean; // default: true
-    lang?: string[];             // default: ['ru', 'en']
+    enableSpelling?: boolean;        // default: false для 'general', true для остальных
+    enableGrammar?: boolean;         // default: false (пока отключено)
+    enablePunctuation?: boolean;     // default: true
+    spellingConservative?: boolean;  // default: true (консервативный режим Спеллера)
+    lang?: string[];                 // default: ['ru', 'en']
 }
 
 export interface PipelineResult {
@@ -35,15 +36,41 @@ export interface PipelineResult {
     originalText: string;
     finalText: string;
     stages: {
-        spelling?: ProcessingResult;
+        refining?: ProcessingResult; // Объединенный этап: орфография + пунктуация
         grammar?: ProcessingResult;
-        punctuation?: ProcessingResult;
     };
     error?: string;
 }
 
 // Глобальная переменная для API клиента
 let ai: GoogleGenAI | null = null;
+
+/**
+ * Estimate token usage based on text length
+ * Approximate: 1 token ≈ 4 chars in English, 2-3 chars in Russian
+ */
+function estimateTokens(text: string): { input: number; output: number } {
+    const charCount = text.length;
+    // Conservative estimate: ~2.5 chars per token for mixed content
+    const estimatedTokens = Math.ceil(charCount / 2.5);
+    return {
+        input: estimatedTokens,
+        output: Math.ceil(estimatedTokens * 0.3) // Output is typically smaller
+    };
+}
+
+/**
+ * Track Gemini usage
+ */
+function trackGeminiUsage(inputText: string, outputText: string) {
+    try {
+        const input = estimateTokens(inputText);
+        const output = estimateTokens(outputText);
+        updateQuotaUsage(input.input, output.output);
+    } catch (err) {
+        console.warn('Failed to track quota usage:', err);
+    }
+}
 
 /**
  * Установить API ключ Gemini для постобработки
@@ -66,64 +93,7 @@ function getAI() {
     return ai;
 }
 
-/**
- * ЭТАП 1: Исправление орфографии через Яндекс.Спеллер
- */
-export async function fixSpelling(text: string, lang: string[] = ['ru', 'en']): Promise<ProcessingResult> {
-    try {
-        const result = await checkSpelling(text, lang);
 
-        if (result.success && result.text) {
-            return {
-                success: true,
-                text: result.text,
-                provider: 'Yandex.Speller'
-            };
-        } else {
-            // Fallback на LLM при ошибке Яндекс.Спеллер
-            console.warn('Yandex.Speller failed, using LLM fallback for spelling');
-            return await fixSpellingWithLLM(text);
-        }
-    } catch (error) {
-        console.error('Spelling correction error:', error);
-        // Fallback на LLM
-        return await fixSpellingWithLLM(text);
-    }
-}
-
-/**
- * Fallback исправление орфографии через LLM
- */
-async function fixSpellingWithLLM(text: string): Promise<ProcessingResult> {
-    try {
-        const client = getAI();
-
-        const prompt = `Исправь только орфографические ошибки в следующем тексте. Не меняй грамматику, пунктуацию или стиль. Верни только исправленный текст без пояснений.
-
-Текст:
-${text}`;
-
-        const result = await client.models.generateContent({
-            model: 'gemini-2.0-flash-exp',
-            contents: { parts: [{ text: prompt }] }
-        });
-
-        const processedText = result.text?.trim() || text;
-
-        return {
-            success: true,
-            text: processedText,
-            provider: 'Gemini (Spelling Fallback)'
-        };
-    } catch (error) {
-        console.error('LLM spelling fallback error:', error);
-        return {
-            success: false,
-            text: text,
-            error: error instanceof Error ? error.message : 'Unknown error'
-        };
-    }
-}
 
 /**
  * ЭТАП 2: Исправление грамматики через LLM
@@ -143,6 +113,9 @@ ${text}`;
         });
 
         const processedText = result.text?.trim() || text;
+        
+        // Track quota usage
+        trackGeminiUsage(text, processedText);
 
         return {
             success: true,
@@ -170,10 +143,8 @@ export async function processTextPipeline(
     const {
         mode = 'general',
         tone = 'default',
-        enableSpelling = true,
-        enableGrammar = false, // По умолчанию отключен, так как Gemini хорошо справляется сразу
         enablePunctuation = true,
-        lang = ['ru', 'en']
+        enableGrammar = false,
     } = options;
 
     const result: PipelineResult = {
@@ -186,36 +157,25 @@ export async function processTextPipeline(
     let currentText = text;
 
     try {
-        // ЭТАП 1: Орфография (Яндекс.Спеллер)
-        if (enableSpelling) {
-            console.info('🔤 Pipeline Stage 1/3: Spelling correction...');
-            const spellingResult = await fixSpelling(currentText, lang);
-            result.stages.spelling = spellingResult;
+        // ЕДИНЫЙ ЭТАП: Орфография + Пунктуация + (опционально) Стиль
+        if (enablePunctuation) {
+            console.info('✏️ Pipeline Stage: Refining text (spelling + punctuation)...');
+            const refiningResult = await fixPunctuation(currentText, mode, tone);
+            result.stages.refining = refiningResult;
 
-            if (spellingResult.success && spellingResult.text) {
-                currentText = spellingResult.text;
+            if (refiningResult.success && refiningResult.text) {
+                currentText = refiningResult.text;
             }
         }
 
-        // ЭТАП 2: Грамматика (опционально)
+        // ЭТАП Грамматика (если включен)
         if (enableGrammar) {
-            console.info('📝 Pipeline Stage 2/3: Grammar correction...');
+            console.info('📝 Pipeline Stage: Grammar correction...');
             const grammarResult = await fixGrammar(currentText, mode);
             result.stages.grammar = grammarResult;
 
             if (grammarResult.success && grammarResult.text) {
                 currentText = grammarResult.text;
-            }
-        }
-
-        // ЭТАП 3: Пунктуация
-        if (enablePunctuation) {
-            console.info('✏️ Pipeline Stage 3/3: Punctuation correction...');
-            const punctuationResult = await fixPunctuation(currentText, mode, tone);
-            result.stages.punctuation = punctuationResult;
-
-            if (punctuationResult.success && punctuationResult.text) {
-                currentText = punctuationResult.text;
             }
         }
 
@@ -228,7 +188,7 @@ export async function processTextPipeline(
         console.error('Pipeline processing error:', error);
         result.success = false;
         result.error = error instanceof Error ? error.message : 'Unknown error';
-        result.finalText = text; // Возвращаем оригинальный текст при ошибке
+        result.finalText = text;
     }
 
     return result;
@@ -253,11 +213,17 @@ export async function fixPunctuation(text: string, mode: TranscriptionMode = 'ge
     let llmSystemPrompt: string;
 
     if (isGeneralMode) {
-        geminiPrompt = `Исправь пунктуацию в следующем тексте. Расставь запятые, точки, вопросительные и восклицательные знаки согласно правилам русского и английского языка. Сохрани весь контент без изменений, только добавь знаки препинания. Не добавляй никаких пояснений, верни только исправленный текст.
+        geminiPrompt = `Ты — профессиональный редактор. Исправь пунктуацию и явные орфографические опечатки в тексте. 
+ПРАВИЛА:
+1. Расставь запятые, точки, знаки вопроса.
+2. Исправь ТОЛЬКО явные ошибки в словах (опечатки).
+3. НЕ МЕНЯЙ оригинальные слова, если они написаны верно.
+4. НЕ МЕНЯЙ стиль или структуру предложений.
+5. Верни только исправленный текст без пояснений.
 
 Текст:
 ${text}`;
-        llmSystemPrompt = `Исправь пунктуацию в тексте. Расставь запятые, точки, вопросительные и восклицательные знаки. Сохрани весь контент без изменений, только добавь знаки препинания. Верни только исправленный текст без пояснений.`;
+        llmSystemPrompt = `Исправь пунктуацию и явные опечатки в тексте. Сохраняй оригинальные слова и стиль. Верни только исправленный текст без пояснений.`;
     } else {
         // Для 'corrector' и других режимов: применяем тональность
         const toneInstructions: Record<TonePreset, string> = {
@@ -269,11 +235,13 @@ ${text}`;
 
         const toneInstruction = toneInstructions[tone] || '';
 
-        geminiPrompt = `Исправь пунктуацию и улучши стиль следующего текста. ${toneInstruction} Расставь запятые, точки, вопросительные и восклицательные знаки. Сохрани ключевой смысл. Верни только исправленный текст без пояснений.
+        geminiPrompt = `Ты — профессиональный корректор. Исправь пунктуацию, орфографию и улучши стиль следующего текста. 
+${toneInstruction} 
+Расставь знаки препинания. Сохрани ключевой смысл, но сделай текст грамотным и красивым. Верни только исправленный текст без пояснений.
 
 Текст:
 ${text}`;
-        llmSystemPrompt = `Исправь пунктуацию и улучши стиль текста. ${toneInstruction} Расставь запятые, точки, вопросительные и восклицательные знаки. Сохрани ключевой смысл, но улучши формулировки. Верни только исправленный текст без пояснений.`;
+        llmSystemPrompt = `Исправь пунктуацию, орфографию и улучши стиль текста. ${toneInstruction} Расставь знаки препинания. Верни только исправленный текст без пояснений.`;
     }
 
     // ПОПЫТКА 1: Gemini (если настроен)
@@ -285,6 +253,9 @@ ${text}`;
             });
 
             const processedText = result.text?.trim() || text;
+            
+            // Track quota usage
+            trackGeminiUsage(text, processedText);
 
             return {
                 success: true,
@@ -536,7 +507,6 @@ ${text}`;
 // Экспорт для использования в других модулях
 export default {
     setPostProcessingApiKey,
-    fixSpelling,
     fixGrammar,
     processTextPipeline,
     fixPunctuation,

@@ -10,7 +10,19 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
       },
+      optimizeDeps: {
+        include: ['react', 'react-dom', 'lucide-react', '@google/genai'],
+        force: true,
+      },
       plugins: [react()],
+      build: {
+        cssCodeSplit: false,
+        rollupOptions: {
+          output: {
+            manualChunks: undefined,
+          },
+        },
+      },
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
