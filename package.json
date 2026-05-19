@@ -1,15 +1,20 @@
 {
   "name": "voicescribe-auto-copy",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.2",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
     "electron:dev": "concurrently --success first -k \"vite\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "electron:release": "node scripts/electron-release.cjs",
+    "electron:release:check": "node scripts/electron-release.cjs --check",
     "release:github": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --publish always",
     "dist": "npm run electron:build"
   },
@@ -68,8 +73,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "your-github-owner",
-        "repo": "your-github-repo",
+        "owner": "Benbok",
+        "repo": "ai-studio-audio-transcriber",
         "releaseType": "release"
       }
     ]

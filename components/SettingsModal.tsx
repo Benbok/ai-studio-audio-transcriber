@@ -29,6 +29,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
     const [activeTab, setActiveTab] = useState<TabType>('api');
     const [geminiKey, setGeminiKey] = useState('');
+    const [hasStoredGeminiKey, setHasStoredGeminiKey] = useState(false);
     const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [msg, setMsg] = useState('');
     const [quotaConfig, setQuotaState] = useState(() => getQuotaConfig() || DEFAULT_QUOTA_CONFIG);
@@ -37,10 +38,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     // Load from localStorage on open
     useEffect(() => {
         if (isOpen) {
-            const gKey = localStorage.getItem('VITE_GEMINI_API_KEY') || '';
+            const storedKey = (localStorage.getItem('VITE_GEMINI_API_KEY') || '').trim();
+            const envKey = (
+                window.electronEnv?.GEMINI_API_KEY
+                || window.electronEnv?.VITE_GEMINI_API_KEY
+                || ''
+            ).trim();
+            const hasKey = Boolean(storedKey || envKey);
             const quota = getQuotaConfig();
 
-            setGeminiKey(gKey);
+            // Security UX: never prefill API key input with stored value.
+            setGeminiKey('');
+            setHasStoredGeminiKey(hasKey);
             if (quota) {
                 setQuotaState(quota);
                 setDailyLimit(quota.dailyLimit.toString());
@@ -61,11 +70,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         setMsg('Проверка ключей и сохранение...');
 
         try {
+            const sanitizedGeminiKey = geminiKey.trim();
+
             // Update Services
-            if (geminiKey) setGeminiApiKey(geminiKey);
+            if (sanitizedGeminiKey) {
+                setGeminiApiKey(sanitizedGeminiKey);
+            }
 
             // Persist
-            if (geminiKey) localStorage.setItem('VITE_GEMINI_API_KEY', geminiKey);
+            if (sanitizedGeminiKey) {
+                localStorage.setItem('VITE_GEMINI_API_KEY', sanitizedGeminiKey);
+                setHasStoredGeminiKey(true);
+            }
             
             // Save quota config
             const limit = parseInt(dailyLimit) || 1500;
@@ -74,7 +90,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             setDailyLimit(updatedQuota.dailyLimit.toString());
 
             // Health check for Gemini
-            if (geminiKey) {
+            if (sanitizedGeminiKey) {
                 setMsg('Проверка ключа Gemini...');
                 try {
                     const health = await checkGeminiHealth();
@@ -87,7 +103,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             }
 
             setStatus('success');
-            setMsg('Настройки успешно сохранены!');
+            setMsg(sanitizedGeminiKey ? 'Настройки успешно сохранены!' : 'Лимит квоты сохранен. API ключ не изменен.');
             setTimeout(onClose, 1500);
 
         } catch (err: any) {
@@ -97,11 +113,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     };
 
+    const handleClearGeminiKey = () => {
+        localStorage.removeItem('VITE_GEMINI_API_KEY');
+        setGeminiKey('');
+        setHasStoredGeminiKey(false);
+        setStatus('success');
+        setMsg('Сохраненный Gemini API ключ удален.');
+    };
+
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
-            <div className="glass-strong border border-gray-800/50 rounded-3xl w-full max-w-2xl shadow-2xl relative animate-scale-in">
+            <div className="glass-strong border border-gray-800/50 rounded-3xl w-full max-w-2xl max-h-[calc(100vh-2rem)] shadow-2xl relative animate-scale-in flex flex-col">
 
                 {/* Close Button */}
                 <button
@@ -146,7 +170,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 {/* Content */}
-                <div className="p-6 min-h-[300px]">
+                <div className="p-6 min-h-0 overflow-y-auto custom-scrollbar flex-1">
 
                     {/* API Keys Tab */}
                     {activeTab === 'api' && (
@@ -173,8 +197,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </div>
                                 <p className="text-xs text-blue-300 mt-2 flex items-center gap-1">
                                     <AlertCircle className="w-3 h-3" />
-                                    Транскрибация + исправление пунктуации/орфографии в одном LLM вызове
+                                    Поле всегда пустое при открытии. Ключ сохраняется только после ручного ввода и кнопки "Сохранить изменения".
                                 </p>
+
+                                {hasStoredGeminiKey && (
+                                    <div className="mt-3 flex items-center justify-between gap-2">
+                                        <p className="text-xs text-gray-400">В приложении уже есть сохраненный Gemini API ключ.</p>
+                                        <button
+                                            type="button"
+                                            onClick={handleClearGeminiKey}
+                                            className="px-2 py-1 rounded-md text-xs bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
+                                        >
+                                            Удалить ключ
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Gemini Quota Settings */}

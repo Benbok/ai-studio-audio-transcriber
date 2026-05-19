@@ -19,6 +19,8 @@ const MINI_WINDOW_BOUNDS = {
 };
 
 const UPDATER_CHANNEL = 'updater:state';
+const DEFAULT_GH_OWNER = 'Benbok';
+const DEFAULT_GH_REPO = 'ai-studio-audio-transcriber';
 const DEFAULT_UPDATE_STATE = {
   status: 'idle',
   message: '',
@@ -55,12 +57,12 @@ function configureAutoUpdater(envVars = {}) {
     return;
   }
 
-  const githubOwner = envVars.GH_OWNER || process.env.GH_OWNER;
-  const githubRepo = envVars.GH_REPO || process.env.GH_REPO;
+  const githubOwner = envVars.GH_OWNER || process.env.GH_OWNER || DEFAULT_GH_OWNER;
+  const githubRepo = envVars.GH_REPO || process.env.GH_REPO || DEFAULT_GH_REPO;
   if (!githubOwner || !githubRepo) {
     setUpdaterState({
       status: 'disabled',
-      message: 'Set GH_OWNER and GH_REPO in .env.local to enable updates.',
+      message: 'Set GH_OWNER and GH_REPO in .env.local or .env to enable updates.',
     });
     return;
   }
@@ -128,7 +130,7 @@ function configureAutoUpdater(envVars = {}) {
 }
 
 /**
- * Loads .env.local from the executable's directory (production) or project root (dev)
+ * Loads .env and .env.local from the executable's directory (production) or project root (dev)
  * Returns parsed environment variables as an object
  */
 function loadEnvLocal() {
@@ -137,31 +139,35 @@ function loadEnvLocal() {
   // In production, check the executable's directory
   // In development, check the project root
   const isDev = !app.isPackaged;
-  const envPath = isDev
-    ? path.join(__dirname, '..', '.env.local')
-    : path.join(path.dirname(process.execPath), '.env.local');
+  const envDir = isDev
+    ? path.join(__dirname, '..')
+    : path.dirname(process.execPath);
+  const envPaths = [
+    path.join(envDir, '.env'),
+    path.join(envDir, '.env.local'),
+  ];
 
   try {
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
-      // Simple .env parser (handles KEY=value format, ignores comments and empty lines)
-      content.split('\n').forEach(line => {
-        line = line.trim();
-        if (line && !line.startsWith('#')) {
-          const match = line.match(/^([^=]+)=(.*)$/);
-          if (match) {
-            const key = match[1].trim();
-            const value = match[2].trim().replace(/^["']|["']$/g, ''); // Remove quotes
-            env[key] = value;
+    envPaths.forEach((envPath) => {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        // Simple .env parser (handles KEY=value format, ignores comments and empty lines)
+        content.split('\n').forEach(line => {
+          line = line.trim();
+          if (line && !line.startsWith('#')) {
+            const match = line.match(/^([^=]+)=(.*)$/);
+            if (match) {
+              const key = match[1].trim();
+              const value = match[2].trim().replace(/^["']|["']$/g, ''); // Remove quotes
+              env[key] = value;
+            }
           }
-        }
-      });
-      console.log(`Loaded .env.local from: ${envPath}`);
-    } else {
-      console.warn(`.env.local not found at: ${envPath}`);
-    }
+        });
+        console.log(`Loaded env file: ${envPath}`);
+      }
+    });
   } catch (error) {
-    console.error('Error loading .env.local:', error);
+    console.error('Error loading env files:', error);
   }
 
   return env;
@@ -170,6 +176,10 @@ function loadEnvLocal() {
 function createWindow() {
   // Load environment variables
   const envVars = loadEnvLocal();
+  const rendererEnvVars = {
+    GEMINI_API_KEY: envVars.GEMINI_API_KEY,
+    VITE_GEMINI_API_KEY: envVars.VITE_GEMINI_API_KEY,
+  };
 
   // Create the browser window
   mainWindow = new BrowserWindow({
@@ -196,7 +206,7 @@ function createWindow() {
   // Store env vars for preload script access
   // The preload script will read them via IPC
   mainWindow.webContents.on('dom-ready', () => {
-    mainWindow.webContents.send('env-vars', envVars);
+    mainWindow.webContents.send('env-vars', rendererEnvVars);
     emitUpdaterState();
   });
 

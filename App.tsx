@@ -1,15 +1,24 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor, History, Maximize2, X, Minus } from 'lucide-react';
-import { RecorderStatus, TonePreset } from './types';
+import { RecorderStatus, UpdaterState } from './types';
 import { transcribeAudio, TranscriptionMode, setGeminiApiKey, checkGeminiHealth } from './services/geminiService';
 import { saveRecording } from './services/storageService';
 import { DEFAULT_QUOTA_CONFIG, getQuotaPercentage, getQuotaConfig, getRemainingQuota, subscribeToQuotaUpdates } from './services/quotaService';
+import { checkForUpdates, downloadUpdate, getUpdaterState, quitAndInstallUpdate, subscribeUpdaterState } from './services/updaterService';
 import Visualizer from './components/Visualizer';
 import TranscriptionResult from './components/TranscriptionResult';
 import RecordButton from './components/RecordButton';
 import SettingsModal from './components/SettingsModal';
 import RecordingsList from './components/RecordingsList';
+
+const DEFAULT_UPDATER_STATE: UpdaterState = {
+  status: 'idle',
+  message: '',
+  progressPercent: 0,
+  availableVersion: null,
+  currentVersion: 'unknown',
+};
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RecorderStatus>(RecorderStatus.IDLE);
@@ -45,10 +54,12 @@ const App: React.FC = () => {
   const [copyError, setCopyError] = useState<boolean>(false);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [mode, setMode] = useState<TranscriptionMode>('general');
-  const [tone, setTone] = useState<TonePreset>('default');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [quotaConfig, setQuotaConfig] = useState(() => getQuotaConfig() || DEFAULT_QUOTA_CONFIG);
+  const [updaterState, setUpdaterState] = useState<UpdaterState>(DEFAULT_UPDATER_STATE);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState<boolean>(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -78,13 +89,22 @@ const App: React.FC = () => {
     };
   }, [status]);
 
-  // Load keys and tone from storage on mount
+  // Load key from storage on mount
   useEffect(() => {
-    const gKey = localStorage.getItem('VITE_GEMINI_API_KEY');
-    if (gKey) setGeminiApiKey(gKey);
+    const storedKey = (localStorage.getItem('VITE_GEMINI_API_KEY') || '').trim();
+    const envKey = (
+      window.electronEnv?.GEMINI_API_KEY
+      || window.electronEnv?.VITE_GEMINI_API_KEY
+      || ''
+    ).trim();
+    const keyToUse = storedKey || envKey;
 
-    const savedTone = (localStorage.getItem('TONE_PRESET') || 'default') as TonePreset;
-    setTone(savedTone);
+    if (keyToUse) {
+      setGeminiApiKey(keyToUse);
+      if (!storedKey) {
+        localStorage.setItem('VITE_GEMINI_API_KEY', keyToUse);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -92,6 +112,35 @@ const App: React.FC = () => {
     return subscribeToQuotaUpdates((updated) => {
       setQuotaConfig(updated);
     });
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    getUpdaterState().then((state) => {
+      if (mounted) {
+        setUpdaterState(state);
+      }
+    }).catch(() => {
+      if (mounted) {
+        setUpdaterState({
+          ...DEFAULT_UPDATER_STATE,
+          status: 'error',
+          message: 'Не удалось получить статус обновления.',
+        });
+      }
+    });
+
+    const unsubscribe = subscribeUpdaterState((state) => {
+      if (mounted) {
+        setUpdaterState(state);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
   }, []);
 
   // Health check on mount
@@ -110,6 +159,30 @@ const App: React.FC = () => {
       console.warn('Health refresh error', e);
     } finally {
       setRefreshingHealth(false);
+    }
+  };
+
+  const handleCheckUpdates = async () => {
+    setIsCheckingUpdates(true);
+    try {
+      const nextState = await checkForUpdates();
+      setUpdaterState(nextState);
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  };
+
+  const handleDownloadUpdate = async () => {
+    const nextState = await downloadUpdate();
+    setUpdaterState(nextState);
+  };
+
+  const handleInstallUpdate = async () => {
+    setIsInstallingUpdate(true);
+    try {
+      await quitAndInstallUpdate();
+    } finally {
+      setIsInstallingUpdate(false);
     }
   };
 
@@ -246,11 +319,10 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [status]);
 
-  const handleTranscription = async (audioBlob: Blob, recordingIdToUpdate?: number, toneOverride?: TonePreset) => {
+  const handleTranscription = async (audioBlob: Blob) => {
     try {
       setStatus(RecorderStatus.PROCESSING);
-      const activeTone = toneOverride || tone;
-      const result = await transcribeAudio(audioBlob, mode, 'gemini', activeTone);
+      const result = await transcribeAudio(audioBlob, mode, 'gemini');
 
       setText(result.text);
       setLastProvider(result.provider);
@@ -261,7 +333,6 @@ const App: React.FC = () => {
         await saveRecording(audioBlob, result.text, {
           mode,
           provider: result.provider,
-          tone: activeTone,
           duration: elapsedTime,
         });
       } catch (saveErr) {
@@ -274,14 +345,14 @@ const App: React.FC = () => {
   };
 
 
-  const handleRetranscribe = (audioBlob: Blob, recordingId: number, toneOverride?: TonePreset) => {
+  const handleRetranscribe = (audioBlob: Blob, recordingId: number) => {
     // Reset state and re-transcribe with current settings (or overridden tone)
     setText("");
     setError(null);
     setCopied(false);
     setLastProvider(null);
     currentAudioBlobRef.current = audioBlob;
-    handleTranscription(audioBlob, recordingId, toneOverride);
+    handleTranscription(audioBlob);
   };
 
   return (
@@ -405,7 +476,7 @@ const App: React.FC = () => {
                     Режим
                   </label>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {(['general', 'corrector', 'coder', 'translator'] as TranscriptionMode[]).map((m) => (
+                    {(['general', 'corrector', 'translator'] as TranscriptionMode[]).map((m) => (
                       <button
                         key={m}
                         onClick={() => setMode(m)}
@@ -414,7 +485,7 @@ const App: React.FC = () => {
                           : 'bg-white/5 text-gray-500 hover:text-gray-300 hover:bg-white/10 border border-transparent'
                           }`}
                       >
-                        {m === 'general' ? '📝 Общий' : m === 'corrector' ? '✏️ Корректор' : m === 'coder' ? '💻 Код' : '🌍 Перевод'}
+                        {m === 'general' ? '📝 Общий' : m === 'corrector' ? '✏️ Корректор' : '🌍 Перевод'}
                       </button>
                     ))}
                   </div>
@@ -481,7 +552,16 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        updaterState={updaterState}
+        isCheckingUpdates={isCheckingUpdates}
+        isInstallingUpdate={isInstallingUpdate}
+        onCheckUpdates={handleCheckUpdates}
+        onDownloadUpdate={handleDownloadUpdate}
+        onInstallUpdate={handleInstallUpdate}
+      />
       <RecordingsList
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
