@@ -2,7 +2,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Square, AlertCircle, Check, Copy, RotateCw, Settings as SettingsIcon, Monitor, History, Maximize2, X, Minus } from 'lucide-react';
 import { RecorderStatus, UpdaterState } from './types';
-import { transcribeAudio, TranscriptionMode, setGeminiApiKey, checkGeminiHealth } from './services/geminiService';
+import { transcribeAudio, TranscriptionMode, setGeminiApiKey, setGeminiModel, getGeminiModel, checkGeminiHealth } from './services/geminiService';
 import { saveRecording } from './services/storageService';
 import { DEFAULT_QUOTA_CONFIG, getQuotaPercentage, getQuotaConfig, getRemainingQuota, subscribeToQuotaUpdates } from './services/quotaService';
 import { checkForUpdates, downloadUpdate, getUpdaterState, quitAndInstallUpdate, subscribeUpdaterState } from './services/updaterService';
@@ -91,18 +91,43 @@ const App: React.FC = () => {
 
   // Load key from storage on mount
   useEffect(() => {
+    const readElectronEnv = (key: string): string => {
+      const env = window.electronEnv as any;
+      if (typeof env?.[key] === 'string') return env[key];
+      if (typeof env?.get === 'function') {
+        const value = env.get(key);
+        return typeof value === 'string' ? value : '';
+      }
+      return '';
+    };
+
     const storedKey = (localStorage.getItem('VITE_GEMINI_API_KEY') || '').trim();
     const envKey = (
-      window.electronEnv?.GEMINI_API_KEY
-      || window.electronEnv?.VITE_GEMINI_API_KEY
+      readElectronEnv('GEMINI_API_KEY')
+      || readElectronEnv('VITE_GEMINI_API_KEY')
       || ''
     ).trim();
     const keyToUse = storedKey || envKey;
+
+    const storedModel = (localStorage.getItem('VITE_GEMINI_MODEL') || '').trim();
+    const envModel = (
+      readElectronEnv('GEMINI_MODEL')
+      || readElectronEnv('VITE_GEMINI_MODEL')
+      || ''
+    ).trim();
+    const modelToUse = storedModel || envModel;
 
     if (keyToUse) {
       setGeminiApiKey(keyToUse);
       if (!storedKey) {
         localStorage.setItem('VITE_GEMINI_API_KEY', keyToUse);
+      }
+    }
+
+    if (modelToUse) {
+      setGeminiModel(modelToUse);
+      if (!storedModel) {
+        localStorage.setItem('VITE_GEMINI_MODEL', modelToUse);
       }
     }
   }, []);
@@ -525,7 +550,7 @@ const App: React.FC = () => {
               <div className="flex items-center justify-between text-[10px]">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-gray-600">Gemini 2.5 Flash:</span>
+                    <span className="text-gray-600">{getGeminiModel()}:</span>
                     <HealthDot status={geminiHealth?.status} />
                     <span className="text-gray-500 capitalize">{geminiHealth?.status || '—'}</span>
                   </div>

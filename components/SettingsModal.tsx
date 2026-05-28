@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, AlertCircle, Loader2, Key, Palette, Keyboard, Zap, Download, RefreshCw } from 'lucide-react';
-import { setGeminiApiKey, checkGeminiHealth } from '../services/geminiService';
+import { setGeminiApiKey, setGeminiModel, getGeminiModel, getGeminiModelOptions, checkGeminiHealth } from '../services/geminiService';
 import { DEFAULT_QUOTA_CONFIG, getQuotaConfig, setQuotaConfig, getQuotaPercentage, getQuotaWarning, subscribeToQuotaUpdates } from '../services/quotaService';
 import type { UpdaterState } from '../types';
 
@@ -29,6 +29,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
     const [activeTab, setActiveTab] = useState<TabType>('api');
     const [geminiKey, setGeminiKey] = useState('');
+    const [geminiModel, setGeminiModelState] = useState(getGeminiModel());
+    const [geminiModelOptions, setGeminiModelOptions] = useState<Array<{ id: string; label: string }>>([
+        { id: getGeminiModel(), label: getGeminiModel() },
+    ]);
     const [hasStoredGeminiKey, setHasStoredGeminiKey] = useState(false);
     const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [msg, setMsg] = useState('');
@@ -38,18 +42,55 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     // Load from localStorage on open
     useEffect(() => {
         if (isOpen) {
+            const readElectronEnv = (key: string): string => {
+                const env = window.electronEnv as any;
+                if (typeof env?.[key] === 'string') return env[key];
+                if (typeof env?.get === 'function') {
+                    const value = env.get(key);
+                    return typeof value === 'string' ? value : '';
+                }
+                return '';
+            };
+
             const storedKey = (localStorage.getItem('VITE_GEMINI_API_KEY') || '').trim();
             const envKey = (
-                window.electronEnv?.GEMINI_API_KEY
-                || window.electronEnv?.VITE_GEMINI_API_KEY
+                readElectronEnv('GEMINI_API_KEY')
+                || readElectronEnv('VITE_GEMINI_API_KEY')
                 || ''
             ).trim();
+
+            const storedModel = (localStorage.getItem('VITE_GEMINI_MODEL') || '').trim();
+            const envModel = (
+                readElectronEnv('GEMINI_MODEL')
+                || readElectronEnv('VITE_GEMINI_MODEL')
+                || ''
+            ).trim();
+
             const hasKey = Boolean(storedKey || envKey);
             const quota = getQuotaConfig();
+            const modelToUse = storedModel || envModel || getGeminiModel();
 
             // Security UX: never prefill API key input with stored value.
             setGeminiKey('');
+            setGeminiModelState(modelToUse);
             setHasStoredGeminiKey(hasKey);
+
+            void getGeminiModelOptions(true)
+                .then((options) => {
+                    const normalizedOptions = options.length > 0
+                        ? options
+                        : [{ id: modelToUse, label: modelToUse }];
+
+                    if (!normalizedOptions.some((opt) => opt.id === modelToUse)) {
+                        normalizedOptions.unshift({ id: modelToUse, label: modelToUse });
+                    }
+
+                    setGeminiModelOptions(normalizedOptions);
+                })
+                .catch(() => {
+                    setGeminiModelOptions([{ id: modelToUse, label: modelToUse }]);
+                });
+
             if (quota) {
                 setQuotaState(quota);
                 setDailyLimit(quota.dailyLimit.toString());
@@ -71,17 +112,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
         try {
             const sanitizedGeminiKey = geminiKey.trim();
+            const sanitizedGeminiModel = geminiModel.trim();
 
             // Update Services
             if (sanitizedGeminiKey) {
                 setGeminiApiKey(sanitizedGeminiKey);
             }
+            setGeminiModel(sanitizedGeminiModel);
 
             // Persist
             if (sanitizedGeminiKey) {
                 localStorage.setItem('VITE_GEMINI_API_KEY', sanitizedGeminiKey);
                 setHasStoredGeminiKey(true);
             }
+            localStorage.setItem('VITE_GEMINI_MODEL', sanitizedGeminiModel);
             
             // Save quota config
             const limit = parseInt(dailyLimit) || 1500;
@@ -214,12 +258,33 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 )}
                             </div>
 
+                            {/* Gemini Model */}
+                            <div className="border border-blue-500/30 rounded-xl p-4 bg-blue-500/5">
+                                <label className="block text-sm font-semibold text-gray-200 mb-2">
+                                    Модель Gemini для транскрибации
+                                </label>
+                                <select
+                                    value={geminiModel}
+                                    onChange={(e) => setGeminiModelState(e.target.value)}
+                                    className="w-full glass border border-blue-500/50 rounded-xl px-4 py-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-gray-900/60"
+                                >
+                                    {geminiModelOptions.map((option) => (
+                                        <option key={option.id} value={option.id}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-blue-300 mt-2">
+                                    Список загружается из Gemini ListModels и показывает только недорогие Flash/Lite модели для транскрибации.
+                                </p>
+                            </div>
+
                             {/* Gemini Quota Settings */}
                             <div className="border-2 border-blue-500/30 rounded-xl p-4 bg-blue-500/5">
                                 <div className="flex items-center justify-between mb-4">
                                     <label className="flex items-center gap-2 text-sm font-semibold text-gray-200">
                                         <Zap className="w-4 h-4 text-blue-400" />
-                                        Gemini 2.5 Flash - Лимиты квоты
+                                        Gemini - Лимиты квоты
                                     </label>
                                 </div>
 
